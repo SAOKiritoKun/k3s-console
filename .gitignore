@@ -1,0 +1,12 @@
+# 本地数据
+data/
+# k3s离线安装包
+packages/
+# 操作记录
+logs/
+# 依赖
+node_modules/
+
+# 编辑器杂项
+.idea/
+.vscode/

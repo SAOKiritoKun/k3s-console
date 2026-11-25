@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="color-scheme" content="dark light" />
+<title>k3s 集群管家</title>
+<script>
+  (function () {
+    try {
+      var theme = localStorage.getItem('k3s-theme');
+      if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
+    } catch (e) { /* localStorage 不可用时沿用默认主题 */ }
+  })();
+</script>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath fill='%233b82f6' d='M16 2l12 7v14l-12 7L4 23V9z'/%3E%3Cpath fill='%230b1220' d='M16 8l7 4v8l-7 4-7-4v-8z'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="/web/vendor/xterm/xterm.css" />
+<link rel="stylesheet" href="/web/app.css" />
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-server" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01M11 7.5h4M11 16.5h4"/></symbol>
+    <symbol id="i-cluster" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M10.6 7.2 6.5 15.7M13.4 7.2l4.1 8.5M7.5 18h9"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/><path d="m3 18 9 5 9-5" opacity=".45"/></symbol>
+    <symbol id="i-rocket" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 16.5c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.8.7-2.1-.1-2.9-.8-.8-2.1-.8-2.9-.1Z"/><path d="M12 15 9 12a11 11 0 0 1 3-6.5C15.5 2 21 2 21 2s0 5.5-3.5 9A11 11 0 0 1 12 15Z"/><path d="M9 12H5s.5-3 2-4.5S12 6 12 6M12 15v4s3-.5 4.5-2S18 12 18 12"/></symbol>
+    <symbol id="i-activity" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 8-6-16-3 8H2"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h7M15 18h5"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="13" cy="18" r="2"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></symbol>
+    <symbol id="i-compress" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h5V3M21 8h-5V3M3 16h5v5M21 16h-5v5"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5-11-6.5Z"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></symbol>
+    <symbol id="i-chevron-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-chevron-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-cpu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m21 8-9-5-9 5 9 5 9-5Z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1.5-1.5"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></symbol>
+    <symbol id="i-filter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 3H2l8 9.5V19l4 2v-8.5L22 3Z"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 5.5V11c0 5.5 3.4 9.7 8 11 4.6-1.3 8-5.5 8-11V5.5L12 2Z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-zap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.5 13.5H11L9.5 22 19 10h-6.5L13 2Z"/></symbol>
+    <symbol id="i-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></symbol>
+    <symbol id="i-external" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6M10 14 21 3"/></symbol>
+    <symbol id="i-power" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0M12 2v10"/></symbol>
+    <symbol id="i-scroll" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M5 8l7-5 7 5M5 16l7 5 7-5"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 6.2A9.8 9.8 0 0 1 12 6c6.5 0 10 6 10 6a17 17 0 0 1-3.2 3.8M6.2 6.7A16.7 16.7 0 0 0 2 12s3.5 6 10 6a9.9 9.9 0 0 0 4.1-.9"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11Z"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4l2 2h7A2.5 2.5 0 0 1 21 9.5v8A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5z"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 16v2.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V16"/></symbol>
+  </defs>
+</svg>
+
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="logo">
+        <svg viewBox="0 0 32 32" fill="none"><path d="M16 2.5 27.7 9v14L16 29.5 4.3 23V9L16 2.5Z" stroke="#60a5fa" stroke-width="1.4" fill="rgba(59,130,246,.12)"/><path d="M16 8.2 22.6 12v7.8L16 23.6 9.4 19.8V12L16 8.2Z" fill="#3b82f6" fill-opacity=".28" stroke="#93c5fd" stroke-width="1.1"/><circle cx="16" cy="16" r="2.4" fill="#67e8f9"/></svg>
+      </div>
+      <div class="brand-text">
+        <div class="brand-name" id="brandName">k3s 集群管家</div>
+        <div class="brand-sub">k3s · Kubernetes</div>
+      </div>
+    </div>
+
+    <div class="nav-label">控制台</div>
+    <nav class="nav" id="mainNav">
+      <button class="nav-item active" data-view="dashboard" title="概览">
+        <svg><use href="#i-grid"/></svg><span>概览</span>
+      </button>
+      <button class="nav-item" data-view="hosts" title="服务器">
+        <svg><use href="#i-server"/></svg><span>服务器</span>
+      </button>
+      <button class="nav-item" data-view="workloads" title="工作负载">
+        <svg><use href="#i-layers"/></svg><span>工作负载</span>
+      </button>
+      <div class="nav-group" id="deployNavGroup">
+        <button class="nav-item nav-parent" data-view="deploy" title="部署中心" aria-expanded="false" aria-controls="deploySubNav">
+          <svg><use href="#i-rocket"/></svg><span>部署中心</span><svg class="nav-caret" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+        </button>
+        <div class="nav-sub" id="deploySubNav" aria-label="部署中心二级菜单">
+          <button class="nav-subitem" data-deploy-tab="install" title="k3s 安装/卸载"><i class="nav-sub-dot"></i><span>k3s 安装/卸载</span></button>
+          <button class="nav-subitem" data-deploy-tab="upgrade" title="k3s 升级"><i class="nav-sub-dot"></i><span>k3s 升级</span></button>
+          <button class="nav-subitem" data-deploy-tab="components" title="组件与镜像"><i class="nav-sub-dot"></i><span>组件与镜像</span></button>
+          <button class="nav-subitem" data-deploy-tab="custom" title="Pod 部署"><i class="nav-sub-dot"></i><span>Pod 部署</span></button>
+        </div>
+      </div>
+      <button class="nav-item" data-view="jobs" title="操作记录">
+        <svg><use href="#i-activity"/></svg><span>操作记录</span><span class="nav-badge hidden" id="jobBadge">0</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="conn-box">
+        <div class="conn-row"><span class="conn-k">控制台</span><span class="conn-v" id="connVersion">v1.0.0</span></div>
+        <div class="conn-row"><span class="conn-k">SSH 通道</span><span id="connSsh" class="badge neutral">检测中</span></div>
+        <div class="conn-row"><span class="conn-k">主机数</span><span class="conn-v" id="connHosts">0</span></div>
+      </div>
+      <button class="nav-item" data-view="settings" title="设置">
+        <svg><use href="#i-settings"/></svg><span>设置</span>
+      </button>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <button class="icon-btn menu-btn" id="menuBtn" title="菜单"><svg><use href="#i-menu"/></svg></button>
+      <div class="topbar-main">
+        <div class="page-kicker" id="pageKicker">OVERVIEW</div>
+        <h1 class="page-title" id="pageTitle">概览</h1>
+        <p class="page-sub" id="pageSub">服务器与集群汇总，点击数字查看明细</p>
+      </div>
+      <div class="top-actions">
+        <div class="host-picker" id="hostPicker">
+          <button class="host-picker-btn" id="hostPickerBtn" title="选择服务器"></button>
+        </div>
+        <button class="icon-btn" id="refreshBtn" title="刷新"><svg><use href="#i-refresh"/></svg></button>
+        <button class="icon-btn theme-btn" id="themeBtn" type="button" title="切换为白天模式" aria-label="切换为白天模式" aria-pressed="false">
+          <svg class="theme-sun" aria-hidden="true"><use href="#i-sun"/></svg>
+          <svg class="theme-moon" aria-hidden="true"><use href="#i-moon"/></svg>
+        </button>
+        <span class="status-pill" id="apiStatus"><i class="dot warn pulse"></i><span>连接中</span></span>
+      </div>
+    </header>
+
+    <section class="view" id="view">
+      <div class="boot-splash" id="bootSplash">
+        <div class="boot-splash-card">
+          <div class="boot-splash-logo">
+            <span class="boot-spinner"></span>
+            <svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M16 2.5 27.7 9v14L16 29.5 4.3 23V9L16 2.5Z" stroke="#60a5fa" stroke-width="1.4" fill="rgba(59,130,246,.12)"/><path d="M16 8.2 22.6 12v7.8L16 23.6 9.4 19.8V12L16 8.2Z" fill="#3b82f6" fill-opacity=".28" stroke="#93c5fd" stroke-width="1.1"/><circle cx="16" cy="16" r="2.4" fill="#67e8f9"/></svg>
+          </div>
+          <h2 class="boot-splash-title" id="bootSplashTitle">正在连接控制台</h2>
+          <p class="boot-splash-text" id="bootSplashText">正在读取服务状态和服务器列表，首次启动可能需要几秒…</p>
+          <div class="boot-splash-steps">
+            <span class="boot-step" data-boot-step="boot"><i></i>服务连接</span>
+            <span class="boot-step" data-boot-step="hosts"><i></i>服务器列表</span>
+            <span class="boot-step" data-boot-step="ready"><i></i>准备界面</span>
+          </div>
+          <p class="boot-splash-hint" id="bootSplashHint"></p>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div class="overlay" id="overlay"></div>
+<div id="drawerRoot"></div>
+<div id="modalRoot"></div>
+<div class="toasts" id="toasts"></div>
+
+<script src="/web/vendor/xterm/xterm.js" defer></script>
+<script src="/web/vendor/xterm/addon-fit.js" defer></script>
+<script src="/web/vendor/js-yaml.min.js" defer></script>
+<script src="/web/js/01-core.js" defer></script>
+<script src="/web/js/02-shell.js" defer></script>
+<script src="/web/js/03-demo.js" defer></script>
+<script src="/web/js/04-dashboard.js" defer></script>
+<script src="/web/js/04a-terminal.js" defer></script>
+<script src="/web/js/05-hosts.js" defer></script>
+<script src="/web/js/05a-sftp.js" defer></script>
+<script src="/web/js/06-install.js" defer></script>
+<script src="/web/js/07-cluster.js" defer></script>
+<script src="/web/js/08-workloads.js" defer></script>
+<script src="/web/js/09-deploy.js" defer></script>
+<script src="/web/js/10-records-settings.js" defer></script>
+<script src="/web/js/11-main.js" defer></script>
+</body>
+</html>

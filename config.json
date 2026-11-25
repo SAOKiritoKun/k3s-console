@@ -1,0 +1,38 @@
+{
+  "app": {
+    "title": "k3s console",
+    "host": "127.0.0.1",
+    "port": 8964,
+    "accessToken": "",
+    "autoDetect": true,
+    "commandTimeoutMs": 60000,
+    "kubectlTimeoutSeconds": 25
+  },
+  "ssh": {
+    "defaultUser": "root",
+    "defaultPort": 22,
+    "connectTimeoutMs": 12000,
+    "hostKeyPolicy": "accept-new",
+    "knownHostsPath": "",
+    "privateKeyPath": "",
+    "defaultKeyPaths": [
+      "~/.ssh/id_ed25519",
+      "~/.ssh/id_rsa"
+    ],
+    "useSudo": true
+  },
+  "k3s": {
+    "channel": "stable",
+    "installScriptUrl": "https://get.k3s.io",
+    "mirror": "cn",
+    "mirrorUrl": "https://rancher-mirror.rancher.cn/k3s",
+    "offlineDir": "/opt/k3s-offline",
+    "clusterToken": "",
+    "apiPort": 6443,
+    "defaultFlags": [
+      "--write-kubeconfig-mode",
+      "644"
+    ],
+    "registries": []
+  }
+}
