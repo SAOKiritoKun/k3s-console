@@ -23,7 +23,7 @@ English · [简体中文](README_zh.md)
 | Cluster view | Node / Pod / Deployment / Service counters, events, resource usage, node cordon / drain |
 | Workloads | 20 resource kinds, a detail drawer (overview, YAML, logs, terminal, events, describe), apply YAML with server-side dry run, scale, rollout restart, delete, form-based resource creation |
 | Images | Browse node images, pull base images, export a node image to a one-shot `.tar` download, import a `.tar` into one or many nodes (uploaded once, then distributed) |
-| Local templates | YAML files under `data/deploymentTemplates/`, created from a form or imported, applied to one or many servers |
+| Local templates | YAML files under `data/deployment-templates/`, created from a form or imported, applied to one or many servers |
 | Records | Every async job (install, uninstall, upgrade, import, export) is stored with its steps and full log, streamed live, and can be cancelled |
 | UI | Light / dark theme, mobile layout, all assets served locally, `?demo=1` preview that needs no cluster |
 
@@ -96,8 +96,8 @@ token; uninstall first for a clean reset).
 - 查看当前k3s内镜像 lists name, tag, ID and size: copy the name, export the image to a one-shot `.tar` download
   (export it again if the download fails), or delete it by ID.
 - 导入镜像 imports one tar into the current node; 多台导入 uploads it once and distributes it to several nodes.
-- Base image cards (MySQL, PostgreSQL, Redis, Kafka, Java, Go) have a version dropdown, a pull button and copyable
-  pull commands. The registry is configured in `data/image-repository.json`.
+- Base images are grouped into tabs (OS, runtime, database, cache, message queue, registry); every card has a version dropdown, a pull button and copyable
+  pull commands. Everything is editable on the page and every change is written back to `data/image-management/images.json` (not shipped with the repo — it is created on the first save): the `+` at the end of the tab strip adds a category inline, tabs can be dragged to reorder, the `×` on a tab deletes that category (with a confirmation; if it still has images the dialog says how many and deletes those image entries too), and the `…` in a card's top-right corner offers edit and delete (delete asks for confirmation again). Editing the file directly also works — refresh the browser to apply. An image's `kind` references the category `id` (for example `database`), so renaming a category keeps its images; writing the category name itself (`数据库`) still works. The registry is configured in `data/image-management/images-repository.json`.
 
 ### Workloads
 
@@ -106,13 +106,13 @@ token; uninstall first for a clean reset).
 - Apply or edit YAML (server-side dry run first if you want), scale, rolling restart, delete, cordon / uncordon /
   drain a node, read pod logs by container / tail / previous.
 - 新增 builds a manifest for the current kind from a form, previews the YAML, then saves it to
-  `data/deploymentTemplates/` or applies it right away.
+  `data/deployment-templates/` or applies it right away.
 - When the selected server is a worker, the cluster data is read through its control plane and the banner says
   which node that is.
 
 ### Local manifests
 
-- 部署中心 → Pod 部署 manages the YAML files in `data/deploymentTemplates/`. Nothing reaches the cluster until you
+- 部署中心 → Pod 部署 manages the YAML files in `data/deployment-templates/`. Nothing reaches the cluster until you
   press 应用.
 - Create from a form or paste YAML, import `.yaml` files, edit in either mode, then apply to one or more servers
   (dry run first when unsure).
@@ -262,15 +262,17 @@ k3s-console/
 | Path | Contents |
 | --- | --- |
 | `data/server.json` | Server list with credentials — **plaintext, gitignored** |
-| `data/deploymentTemplates/*.yaml` | Local manifests, one YAML per file |
-| `data/image-repository.json` | Registry settings (default `docker.io`) |
+| `data/deployment-templates/*.yaml` | Local manifests, one YAML per file |
+| `data/image-management/images-repository.json` | Registry settings (default `docker.io`) |
+| `data/image-management/images.json` | Image catalogue: categories and image entries, created and updated when you edit on the page; not shipped with the repo |
 | `logs/operations/*.json` | Job records: steps, logs, result |
 | `packages/` | Offline k3s packages as `*.tar.gz` or extracted directories |
 
 A backup of the console is `config.json` + `data/`.
 
-`data/` and `logs/` are created on first start, together with `data/server.json`, `data/image-repository.json` and
-`data/deploymentTemplates/` — a fresh clone needs no manual setup. `logs/tmp/` only appears when an image export
+`data/` and `logs/` are created on first start, together with `data/server.json`, `data/image-management/images-repository.json`
+and `data/deployment-templates/` — a fresh clone needs no manual setup. `data/image-management/images.json` is not in the repo and is not generated at startup;
+it only appears once you edit images or categories on the page (and is recreated by the next edit if deleted), so a fresh install opens the images page empty. `logs/tmp/` only appears when an image export
 starts, and `packages/` is never created for you: create it yourself when you add offline bundles.
 
 ## Security

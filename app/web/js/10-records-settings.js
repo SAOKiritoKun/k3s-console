@@ -81,7 +81,7 @@ function settingsBodyHTML(tab) {
             <div class="kv"><span class="k">服务器数量</span><span class="v">${S.hosts.length}</span></div>
             <div class="kv"><span class="k">应用配置</span><span class="v">config.json</span></div>
             <div class="kv"><span class="k">服务器数据</span><span class="v">data/server.json</span></div>
-            <div class="kv"><span class="k">模板目录</span><span class="v">data/deploymentTemplates/</span></div>
+            <div class="kv"><span class="k">模板目录</span><span class="v">data/deployment-templates/</span></div>
             <div class="divider" style="margin:12px 0"></div>
             <p class="small muted" style="line-height:1.9;margin:0">一个本地优先的 Kubernetes / K3s 运维控制台。通过 SSH 或 kubeconfig 连接服务器，支持环境检测、集群部署、资源查看与修改。服务器凭据保存在本机 data/server.json，应用配置保存在项目根目录 config.json。</p>
           </div>

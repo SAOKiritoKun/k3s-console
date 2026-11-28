@@ -20,6 +20,7 @@ const { ConfigStore } = require('./server/config');
 const { ServerStore, DEFAULT_GROUP } = require('./server/servers');
 const { TemplateStore } = require('./server/templates');
 const { ImageRepositoryStore } = require('./server/imageRepository');
+const { ImageCatalogStore, newCategoryId, newImageId } = require('./server/imageCatalog');
 const { Transport, hasSsh2 } = require('./server/transport');
 const kube = require('./server/kube');
 const inspect = require('./server/inspect');
@@ -33,8 +34,14 @@ const PROJECT_ROOT = path.resolve(ROOT, '..');
 const CONFIG_FILE = path.join(PROJECT_ROOT, 'config.json');
 const DATA_DIR = path.join(PROJECT_ROOT, 'data');
 const SERVERS_FILE = path.join(DATA_DIR, 'server.json');
-const IMAGE_REPOSITORY_FILE = path.join(DATA_DIR, 'image-repository.json');
-const TEMPLATES_DIR = path.join(DATA_DIR, 'deploymentTemplates');
+// 镜像相关配置统一放在 data/image-management/ 下（仓库配置、后续的镜像清单都放这里）
+const IMAGE_MANAGEMENT_DIR = path.join(DATA_DIR, 'image-management');
+const IMAGE_REPOSITORY_FILE = path.join(IMAGE_MANAGEMENT_DIR, 'images-repository.json');
+// 镜像清单（分类 + 镜像）：工程自带的预置文件，只读，不自动生成
+const IMAGE_CATALOG_FILE = path.join(IMAGE_MANAGEMENT_DIR, 'images.json');
+const LEGACY_IMAGE_REPOSITORY_FILE = path.join(DATA_DIR, 'image-repository.json');
+const TEMPLATES_DIR = path.join(DATA_DIR, 'deployment-templates');
+const LEGACY_TEMPLATES_DIR = path.join(DATA_DIR, 'deploymentTemplates');
 const LOGS_DIR = path.join(PROJECT_ROOT, 'logs');
 const JOBS_DIR = path.join(LOGS_DIR, 'operations');
 // 镜像导出会先把远程 tar 拉到控制端临时目录，再由浏览器下载，便于在跟踪窗口里展示进度。
@@ -56,6 +63,29 @@ try {
 let serverStore;
 let templateStore;
 let imageRepositoryStore;
+let imageCatalogStore;
+
+// 旧版本的数据路径改过名，首次启动时把旧路径整体搬到新路径，避免配置丢失
+function migrateDataPath(fromPath, toPath, label) {
+  try {
+    if (fs.existsSync(toPath)) return false;
+    if (!fs.existsSync(fromPath)) return false;
+    fs.mkdirSync(path.dirname(toPath), { recursive: true });
+    try {
+      fs.renameSync(fromPath, toPath);
+    } catch (_) {
+      // 跨盘或权限受限时退回「复制后删除」
+      fs.cpSync(fromPath, toPath, { recursive: true });
+      fs.rmSync(fromPath, { recursive: true, force: true });
+    }
+    console.log(`[data] ${label}已迁移到 ${path.relative(PROJECT_ROOT, toPath).split(path.sep).join('/')}`);
+    return true;
+  } catch (err) {
+    console.error(`[data] ${label}迁移失败，继续使用新路径：${formatError(err)}`);
+    return false;
+  }
+}
+
 try {
   serverStore = new ServerStore(SERVERS_FILE);
   const existed = serverStore.load();
@@ -68,10 +98,26 @@ try {
     store.dropLegacyHosts();
     console.log('[data] 已从 config.json 移除服务器信息');
   }
+  // 先迁移再 ensureDir，否则新目录会先被建出来，旧目录里的配置就搬不过去了
+  migrateDataPath(LEGACY_IMAGE_REPOSITORY_FILE, IMAGE_REPOSITORY_FILE, '镜像仓库配置');
+  migrateDataPath(LEGACY_TEMPLATES_DIR, TEMPLATES_DIR, '本地配置目录');
   templateStore = new TemplateStore(TEMPLATES_DIR);
   templateStore.ensureDir();
   imageRepositoryStore = new ImageRepositoryStore(IMAGE_REPOSITORY_FILE);
   imageRepositoryStore.load();
+  imageCatalogStore = new ImageCatalogStore(IMAGE_CATALOG_FILE);
+  // 启动时确保清单文件存在：没有就建一个空清单，之后新增分类/镜像直接往里写
+  try {
+    if (imageCatalogStore.ensureFile()) console.log(`[data] 已创建空镜像清单：${IMAGE_CATALOG_FILE}`);
+  } catch (err) {
+    console.error(`[data] 创建镜像清单失败：${formatError(err)}`);
+  }
+  // 启动时先校验一次清单，配置写错了能在启动日志里直接看到，但不阻止服务启动
+  try {
+    imageCatalogStore.read();
+  } catch (err) {
+    console.error(`[data] 镜像清单有问题：${formatError(err)}`);
+  }
 } catch (err) {
   console.error('\n[启动失败] ' + formatError(err));
   if (err.detail) console.error(err.detail);
@@ -123,6 +169,134 @@ function decodePathPart(value) {
   } catch (_) {
     throw new HttpError(400, 'URL 编码不合法');
   }
+}
+
+/* ------------------------------------------------------------
+ * 镜像清单编辑：分类增删改名、镜像增删改，写回 images.json
+ * ------------------------------------------------------------ */
+function imageEditPayload(body, id) {
+  const source = body && typeof body === 'object' ? body : {};
+  const rawVersions = Array.isArray(source.versions)
+    ? source.versions
+    : String(source.versions || '').split(/[,，\s]+/);
+  const versions = [];
+  rawVersions.forEach((item) => {
+    const version = String(item === undefined || item === null ? '' : item).trim();
+    if (version && versions.indexOf(version) === -1) versions.push(version);
+  });
+  return {
+    id,
+    name: String(source.name || '').trim(),
+    image: String(source.image || '').trim(),
+    kind: String(source.kind || '').trim(),
+    versions,
+    ico: String(source.ico || '').trim(),
+    tone: String(source.tone || '').trim(),
+    page: String(source.page || '').trim(),
+    desc: String(source.desc || '').trim()
+  };
+}
+
+async function saveImageCatalogChange(isCategory, targetId, method, req) {
+  if (isCategory) {
+    if (!targetId && method === 'POST') {
+      const body = await readJson(req);
+      const label = String(body.label || '').trim();
+      if (!label) throw new HttpError(400, '分类名称不能为空');
+      return imageCatalogStore.update((draft) => {
+        if (draft.categories.some((item) => item.label === label)) {
+          throw new HttpError(409, `分类「${label}」已存在`);
+        }
+        draft.categories.push({ id: newCategoryId(label, draft.categories), label });
+        return draft;
+      });
+    }
+    if (!targetId && method === 'PUT') {
+      // 拖动排序：order 是想要的分类 id 顺序，没列到的按原顺序补在后面
+      const body = await readJson(req);
+      const order = Array.isArray(body.order) ? body.order.map((item) => String(item || '')) : [];
+      if (!order.length) throw new HttpError(400, '缺少 order 字段');
+      return imageCatalogStore.update((draft) => {
+        const remaining = new Map(draft.categories.map((item) => [item.id, item]));
+        const sorted = [];
+        order.forEach((id) => {
+          const item = remaining.get(id);
+          if (!item) return;
+          sorted.push(item);
+          remaining.delete(id);
+        });
+        remaining.forEach((item) => sorted.push(item));
+        draft.categories = sorted;
+        return draft;
+      });
+    }
+    if (targetId && method === 'PUT') {
+      const body = await readJson(req);
+      const label = String(body.label || '').trim();
+      if (!label) throw new HttpError(400, '分类名称不能为空');
+      return imageCatalogStore.update((draft) => {
+        const target = draft.categories.find((item) => item.id === targetId);
+        if (!target) throw new HttpError(404, '分类不存在，可能已经被删除');
+        if (draft.categories.some((item) => item.id !== target.id && item.label === label)) {
+          throw new HttpError(409, `分类「${label}」已存在`);
+        }
+        // id 保持不变，镜像用 kind 关联 id，所以改名不影响归属
+        target.label = label;
+        return draft;
+      });
+    }
+    if (targetId && method === 'DELETE') {
+      return imageCatalogStore.update((draft) => {
+        const target = draft.categories.find((item) => item.id === targetId);
+        if (!target) throw new HttpError(404, '分类不存在，可能已经被删除');
+        draft.categories = draft.categories.filter((item) => item.id !== targetId);
+        // 确认删除分类时一并删掉它下面的镜像配置（兼容 kind 写分类名的老写法）
+        draft.images = draft.images.filter(
+          (item) => item.kind !== targetId && item.kind !== target.label
+        );
+        return draft;
+      });
+    }
+    throw new HttpError(405, `不支持的方法：${method}`);
+  }
+
+  if (!targetId && method === 'POST') {
+    const body = await readJson(req);
+    const payload = imageEditPayload(body, '');
+    if (!payload.name) throw new HttpError(400, '镜像名称不能为空');
+    if (!payload.image) throw new HttpError(400, '镜像地址不能为空');
+    return imageCatalogStore.update((draft) => {
+      if (draft.images.some((item) => item.name === payload.name)) {
+        throw new HttpError(409, `镜像名称「${payload.name}」已存在`);
+      }
+      draft.images.push({ ...payload, id: newImageId(payload.name, draft.images) });
+      return draft;
+    });
+  }
+  if (targetId && method === 'PUT') {
+    const body = await readJson(req);
+    const payload = imageEditPayload(body, targetId);
+    if (!payload.name) throw new HttpError(400, '镜像名称不能为空');
+    if (!payload.image) throw new HttpError(400, '镜像地址不能为空');
+    return imageCatalogStore.update((draft) => {
+      const index = draft.images.findIndex((item) => item.id === targetId);
+      if (index < 0) throw new HttpError(404, '镜像不存在，可能已经被删除');
+      if (draft.images.some((item) => item.id !== targetId && item.name === payload.name)) {
+        throw new HttpError(409, `镜像名称「${payload.name}」已存在`);
+      }
+      draft.images[index] = { ...payload };
+      return draft;
+    });
+  }
+  if (targetId && method === 'DELETE') {
+    return imageCatalogStore.update((draft) => {
+      const index = draft.images.findIndex((item) => item.id === targetId);
+      if (index < 0) throw new HttpError(404, '镜像不存在，可能已经被删除');
+      draft.images.splice(index, 1);
+      return draft;
+    });
+  }
+  throw new HttpError(405, `不支持的方法：${method}`);
 }
 
 /* ------------------------------------------------------------
@@ -502,6 +676,27 @@ async function handleApi(req, res, url) {
       return ok(res, { repository: imageRepositoryStore.save(body) });
     }
     throw new HttpError(405, `不支持的方法：${method}`);
+  }
+
+  // 镜像清单：分类 + 镜像信息，来源 data/image-management/images.json，每次请求都重新读盘
+  if (parts[1] === 'images' && parts[2] === 'catalog' && parts.length === 3) {
+    if (method !== 'GET') throw new HttpError(405, `不支持的方法：${method}`);
+    const catalog = imageCatalogStore.read();
+    return ok(res, {
+      categories: catalog.categories,
+      images: catalog.images,
+      skipped: catalog.skipped,
+      missing: Boolean(catalog.missing),
+      file: 'data/image-management/images.json'
+    });
+  }
+
+  // 镜像清单编辑：分类增删改名、镜像增删改，每次都写回 images.json（文件不存在会创建）
+  if (parts[1] === 'images' && parts[2] === 'catalog' && (parts[3] === 'categories' || parts[3] === 'images') && parts.length <= 5) {
+    const isCategory = parts[3] === 'categories';
+    const targetId = parts[4] ? decodePathPart(parts[4]) : '';
+    const catalogResult = await saveImageCatalogChange(isCategory, targetId, method, req);
+    return ok(res, { catalog: catalogResult });
   }
 
   if (parts[1] === 'config') {

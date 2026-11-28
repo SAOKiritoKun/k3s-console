@@ -477,6 +477,50 @@ svg:not([width]){width:18px;height:18px;flex:none;vertical-align:middle}
 .stat-top{display:flex;align-items:center;justify-content:space-between;color:var(--dim);font-size:11px;letter-spacing:.4px}
 .stat-ico{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.2);color:#93c5fd}
 .stat-ico svg{width:15px;height:15px}
+/* 镜像卡片的图标底色跟着「配色」走，和分类角标同色 */
+.stat-ico.tone-neutral{background:rgba(148,163,184,.12);border-color:rgba(148,163,184,.22);color:#b6c2d6}
+.stat-ico.tone-purple{background:rgba(167,139,250,.14);border-color:rgba(167,139,250,.3);color:#c4b5fd}
+.stat-ico.tone-cyan{background:rgba(34,211,238,.12);border-color:rgba(34,211,238,.3);color:#67e8f9}
+.stat-ico.tone-info{background:rgba(96,165,250,.14);border-color:rgba(96,165,250,.3);color:#93c5fd}
+.stat-ico.tone-ok{background:rgba(52,211,153,.14);border-color:rgba(52,211,153,.3);color:#6ee7b7}
+.stat-ico.tone-warn{background:rgba(251,191,36,.14);border-color:rgba(251,191,36,.3);color:#fcd34d}
+.stat-ico.tone-err{background:rgba(251,113,133,.14);border-color:rgba(251,113,133,.3);color:#fda4af}
+[data-theme="light"] .stat-ico.tone-neutral{color:#475569;border-color:rgba(100,116,139,.35);background:rgba(100,116,139,.12)}
+[data-theme="light"] .stat-ico.tone-purple{color:#6d28d9;border-color:rgba(139,92,246,.35);background:rgba(139,92,246,.12)}
+[data-theme="light"] .stat-ico.tone-cyan{color:#0e7490;border-color:rgba(6,182,212,.35);background:rgba(6,182,212,.12)}
+[data-theme="light"] .stat-ico.tone-info{color:#1d4ed8;border-color:rgba(59,130,246,.35);background:rgba(59,130,246,.12)}
+[data-theme="light"] .stat-ico.tone-ok{color:#047857;border-color:rgba(16,185,129,.35);background:rgba(16,185,129,.12)}
+[data-theme="light"] .stat-ico.tone-warn{color:#92400e;border-color:rgba(245,158,11,.4);background:rgba(245,158,11,.14)}
+[data-theme="light"] .stat-ico.tone-err{color:#b91c1c;border-color:rgba(244,63,94,.35);background:rgba(244,63,94,.12)}
+/* 自定义颜色（存 #rrggbb）：用 color-mix 就地算底色和描边，深浅主题各一套 */
+.stat-ico.tone-custom{color:var(--tone,#93c5fd);background:rgba(148,163,184,.1);border-color:rgba(148,163,184,.22)}
+.badge.custom{color:var(--tone,#b6c2d6);background:rgba(148,163,184,.1);border-color:rgba(148,163,184,.16)}
+@supports (color: color-mix(in srgb, red, blue)){
+  .stat-ico.tone-custom{background:color-mix(in srgb, var(--tone,#93c5fd) 14%, transparent);border-color:color-mix(in srgb, var(--tone,#93c5fd) 32%, transparent);color:color-mix(in srgb, var(--tone,#93c5fd) 72%, #ffffff)}
+  .badge.custom{background:color-mix(in srgb, var(--tone,#b6c2d6) 16%, transparent);border-color:color-mix(in srgb, var(--tone,#b6c2d6) 34%, transparent);color:color-mix(in srgb, var(--tone,#b6c2d6) 78%, #ffffff)}
+  [data-theme="light"] .stat-ico.tone-custom{color:color-mix(in srgb, var(--tone,#1d4ed8) 68%, #000000)}
+  [data-theme="light"] .badge.custom{color:color-mix(in srgb, var(--tone,#475569) 72%, #000000)}
+}
+/* 配色选择器：预置色板 + 自定义取色 */
+.tone-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.tone-swatch{width:24px;height:24px;padding:0;border:1px solid var(--line);border-radius:50%;background:transparent;display:grid;place-items:center;cursor:pointer;transition:border-color .14s,box-shadow .14s,transform .14s}
+.tone-swatch i{width:13px;height:13px;border-radius:50%;background:var(--tone,#94a3b8);display:block}
+.tone-swatch:hover{transform:translateY(-1px)}
+.tone-swatch.active{border-color:rgba(96,165,250,.85);box-shadow:0 0 0 2px rgba(96,165,250,.22)}
+.tone-color-input{width:24px;height:24px;padding:0;border:1px solid var(--line);border-radius:50%;background:transparent;cursor:pointer;appearance:none;-webkit-appearance:none;overflow:hidden}
+.tone-color-input::-webkit-color-swatch-wrapper{padding:2px}
+.tone-color-input::-webkit-color-swatch{border:none;border-radius:50%}
+.tone-color-input::-moz-color-swatch{border:none;border-radius:50%}
+.tone-color-input.active{border-color:rgba(96,165,250,.85);box-shadow:0 0 0 2px rgba(96,165,250,.22)}
+.tone-eye svg{width:13px;height:13px}
+.tone-eye.is-disabled{opacity:.5;cursor:not-allowed}
+.tone-custom-panel{display:grid;gap:8px;margin-top:8px;padding:10px;border:1px solid var(--line);border-radius:9px;background:rgba(148,163,184,.04)}
+.tone-line{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);flex-wrap:wrap}
+.tone-line-sep{color:var(--dim)}
+.tone-hex{width:92px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.tone-rgb{width:58px}
+.tone-preview{display:flex;align-items:center;gap:10px}
+.tone-preview .stat-ico{width:24px;height:24px;border-radius:7px}
 .stat-val{font-size:26px;font-weight:700;letter-spacing:-.5px;margin-top:8px;font-variant-numeric:tabular-nums}
 .stat-val small{font-size:12px;color:var(--dim);font-weight:500;margin-left:4px}
 .stat-foot{font-size:11px;color:var(--muted);margin-top:4px}
@@ -740,6 +784,81 @@ pre.plain{margin:0;white-space:pre-wrap;word-break:break-word;font-family:var(--
 }
 .deploy-subswitch button:hover{color:var(--text);border-color:rgba(148,163,184,.3)}
 .deploy-subswitch button.active{color:#dbeafe;border-color:rgba(59,130,246,.35);background:rgba(59,130,246,.12)}
+/* 页面内二级页签：组件与镜像（组件管理 / 镜像管理 / 查看服务器内镜像） */
+.panel-tabs{
+  display:inline-flex;align-items:center;gap:4px;padding:4px;margin:0 0 16px;flex-wrap:wrap;
+  border:1px solid var(--line);border-radius:12px;background:rgba(8,14,26,.6);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.025);
+}
+.panel-tab{
+  display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border:0;border-radius:9px;
+  background:transparent;color:var(--muted);font-size:12px;font-weight:550;cursor:pointer;
+  transition:background .18s,color .18s,box-shadow .18s;
+}
+.panel-tab svg{width:14px;height:14px}
+.panel-tab:hover{color:var(--text);background:rgba(148,163,184,.07)}
+.panel-tab.active{
+  color:#dbeafe;background:rgba(59,130,246,.16);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 6px 16px -12px rgba(59,130,246,.9);
+}
+/* 三级页签：镜像管理下的镜像分类（数据库 / 缓存 / 消息队列 / 开发环境），比上一级更轻 */
+.panel-tabs.sub{padding:3px;margin:0 0 12px;border-radius:10px;background:rgba(8,14,26,.45)}
+.panel-tabs.sub .panel-tab{padding:6px 11px;border-radius:7px;font-size:11.5px;font-weight:500}
+.panel-tabs.sub .panel-tab.active{background:rgba(59,130,246,.14);box-shadow:none}
+/* 镜像分类页签：可拖动排序，悬停露出删除入口，最右边 + 号就地新增 */
+.panel-tabs.sub .panel-tab[draggable="true"]{cursor:grab}
+.panel-tabs.sub .panel-tab[draggable="true"]:active{cursor:grabbing}
+.panel-tabs.sub .panel-tab.dragging{opacity:.45}
+.panel-tabs.sub .panel-tab.drag-over-before{box-shadow:inset 2px 0 0 0 #60a5fa}
+.panel-tabs.sub .panel-tab.drag-over-after{box-shadow:inset -2px 0 0 0 #60a5fa}
+.panel-tab .tab-del{
+  display:inline-grid;place-items:center;width:14px;height:14px;border-radius:4px;
+  font-size:12px;line-height:1;color:var(--dim);opacity:0;transition:opacity .14s,color .14s,background .14s;
+}
+.panel-tab:hover .tab-del,.panel-tab.active .tab-del{opacity:.7}
+.panel-tab .tab-del:hover{opacity:1;color:#fecdd3;background:rgba(251,113,133,.2)}
+.panel-tab.add{padding:6px 9px;color:var(--dim)}
+.panel-tab.add svg{width:13px;height:13px}
+.panel-tab.add:hover{color:var(--text)}
+.panel-tab-draft{
+  display:inline-flex;align-items:center;gap:4px;padding:2px 4px 2px 7px;border-radius:7px;
+  border:1px solid rgba(59,130,246,.4);background:rgba(59,130,246,.1);
+}
+.tab-draft-input{
+  width:100px;height:20px;padding:0;border:0;border-radius:5px;background:transparent;outline:none;
+  color:var(--text);font-family:inherit;font-size:11.5px;
+}
+.tab-draft-input::placeholder{color:var(--dim)}
+.tab-draft-ok{
+  display:grid;place-items:center;width:20px;height:20px;padding:0;border:0;border-radius:6px;cursor:pointer;
+  background:rgba(59,130,246,.24);color:#bfdbfe;transition:background .14s,color .14s;
+}
+.tab-draft-ok:hover{background:rgba(59,130,246,.4);color:#dbeafe}
+.tab-draft-ok:disabled{opacity:.5;cursor:not-allowed}
+.tab-draft-ok svg{width:12px;height:12px}
+[data-theme="light"] .tab-draft-ok{background:rgba(37,99,235,.14);color:#1d4ed8}
+[data-theme="light"] .tab-draft-ok:hover{background:rgba(37,99,235,.24);color:#1e40af}
+.tab-draft-cancel{
+  display:grid;place-items:center;width:20px;height:20px;padding:0;border:0;border-radius:6px;cursor:pointer;
+  background:rgba(251,113,133,.18);color:#fda4af;transition:background .14s,color .14s;
+}
+.tab-draft-cancel:hover{background:rgba(251,113,133,.32);color:#fecdd3}
+.tab-draft-cancel svg{width:11px;height:11px}
+[data-theme="light"] .tab-draft-cancel{background:rgba(244,63,94,.14);color:#b91c1c}
+[data-theme="light"] .tab-draft-cancel:hover{background:rgba(244,63,94,.24)}
+/* 编辑镜像时选图标：直接显示图标本身，不用记名字 */
+.icon-grid{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(30px,1fr));gap:6px;
+  padding:8px;border:1px solid var(--line);border-radius:9px;background:rgba(148,163,184,.04);
+}
+.icon-choice{
+  display:grid;place-items:center;width:30px;height:30px;padding:0;border:1px solid transparent;border-radius:7px;
+  background:transparent;color:var(--muted);cursor:pointer;transition:color .14s,background .14s,border-color .14s;
+}
+.icon-choice svg{width:15px;height:15px}
+.icon-choice:hover{color:var(--text);background:rgba(148,163,184,.12)}
+.icon-choice.active{color:#dbeafe;border-color:rgba(59,130,246,.55);background:rgba(59,130,246,.18)}
+[data-theme="light"] .icon-choice.active{color:#1d4ed8;border-color:rgba(37,99,235,.45);background:rgba(37,99,235,.12)}
 .k3s-page-switch{
   display:inline-flex;align-items:center;gap:4px;padding:4px;margin:0 0 16px;
   border:1px solid var(--line);border-radius:12px;background:rgba(8,14,26,.6);
@@ -781,6 +900,20 @@ pre.plain{margin:0;white-space:pre-wrap;word-break:break-word;font-family:var(--
 .deploy-target .select:focus{border-color:rgba(96,165,250,.85);box-shadow:0 0 0 3px rgba(59,130,246,.18),0 10px 24px -16px rgba(59,130,246,.8)}
 .deploy-target-count{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--dim);white-space:nowrap}
 .deploy-target-count i{width:6px;height:6px;border-radius:50%;background:#34d399;box-shadow:0 0 0 3px rgba(52,211,153,.13);animation:deployPulse 2.6s ease-in-out infinite}
+.deploy-target-label{display:flex;align-items:center;gap:7px;font-size:10.5px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:#bfdbfe;white-space:nowrap}
+.deploy-target-label svg{width:15px;height:15px;color:#60a5fa}
+/* 查看服务器内镜像：本地筛选（名称 / 镜像 ID），标签与输入框同一行、输入框短一些 */
+.node-image-filters .field{flex:0 0 auto;min-width:0;margin:0;flex-direction:row;align-items:center;gap:8px;white-space:nowrap}
+.node-image-filters .field > .input{flex:0 0 auto;width:200px}
+.node-image-filters .field > #nodeImageNameFilter{width:220px}
+.node-image-filters .field > #nodeImageIdFilter{width:170px}
+.node-image-filters .btn{flex:0 0 auto}
+@media (max-width:540px){
+  .node-image-filters .field{flex:1 1 100%}
+  .node-image-filters .field > .input,
+  .node-image-filters .field > #nodeImageNameFilter,
+  .node-image-filters .field > #nodeImageIdFilter{flex:1 1 auto;width:auto;min-width:0}
+}
 @keyframes deployPulse{0%,100%{box-shadow:0 0 0 3px rgba(52,211,153,.13)}50%{box-shadow:0 0 0 5px rgba(52,211,153,.04)}}
 @media (prefers-reduced-motion:reduce){.deploy-target-count i{animation:none}}
 .offline-package-info{display:flex;flex-direction:column;gap:4px;margin-top:8px;padding:9px 11px;border:1px solid rgba(96,165,250,.16);border-radius:10px;background:rgba(59,130,246,.06)}
@@ -1143,6 +1276,14 @@ pre.plain{margin:0;white-space:pre-wrap;word-break:break-word;font-family:var(--
 }
 [data-theme="light"] .k3s-page-switch button.active{color:#1d4ed8;background:rgba(37,99,235,.12)}
 [data-theme="light"] .k3s-page-switch button.active[data-page="uninstall"]{color:#b91c1c;background:rgba(220,38,38,.1)}
+[data-theme="light"] .panel-tabs{
+  background:#fff;
+  box-shadow:inset 0 1px 0 #fff,0 1px 3px rgba(15,23,42,.05);
+}
+[data-theme="light"] .panel-tab{color:#475569}
+[data-theme="light"] .panel-tab:hover{background:rgba(15,23,42,.05);color:#0f172a}
+[data-theme="light"] .panel-tab.active{color:#1d4ed8;background:rgba(37,99,235,.12)}
+[data-theme="light"] .deploy-target-label{color:#1d4ed8}
 [data-theme="light"] .nav-item.active,
 [data-theme="light"] .nav-subitem.active{
   color:#1d4ed8;

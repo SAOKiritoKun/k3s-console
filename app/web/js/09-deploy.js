@@ -291,7 +291,7 @@ async function deleteYamlTemplate() {
   }
   const confirmed = await confirmDialog({
     title: '删除模板',
-    message: `确定删除「<b>${esc(template.label)}</b>」吗？<br><span class="tiny dim">对应文件会从 data/deploymentTemplates 中删除，且无法恢复。</span>`,
+    message: `确定删除「<b>${esc(template.label)}</b>」吗？<br><span class="tiny dim">对应文件会从 data/deployment-templates 中删除，且无法恢复。</span>`,
     confirmText: '删除',
     danger: true
   });
@@ -319,7 +319,7 @@ function openSaveYamlTemplateDialog() {
     body: `<div class="field">
       <label class="label" for="yamlTemplateName">模板名称</label>
       <input class="input" id="yamlTemplateName" maxlength="40" placeholder="例如：我的 Nginx 应用" autocomplete="off" />
-      <div class="tiny dim" style="margin-top:6px">保存到 data/deploymentTemplates 目录；同名模板会覆盖，之后可从模板下拉框重新载入或删除。</div>
+      <div class="tiny dim" style="margin-top:6px">保存到 data/deployment-templates 目录；同名模板会覆盖，之后可从模板下拉框重新载入或删除。</div>
       <div class="alert err hidden" id="yamlTemplateError" style="margin-top:10px"></div>
     </div>`,
     foot: `<button class="btn" data-close="1">取消</button><button class="btn primary" id="yamlTemplateSave">${icon('check')} 保存</button>`,
@@ -441,25 +441,87 @@ function deployTargetHost() {
   return deployTargetHosts()[0] || null;
 }
 
-function deployTargetLabel(host) {
-  const detected = S.detected[host.id];
-  const raw = detected && detected.k8s && detected.k8s.version && detected.k8s.version !== '-' ? detected.k8s.version : '';
-  const matched = raw.match(/v?\d+\.\d+\.\d+(?:\+k3s\d+)?/);
-  const version = matched ? matched[0] : raw.split(/\s+/)[0];
-  return version ? `${hostName(host)} · ${version}` : hostName(host);
+// ---------------------------------------------------------------- 组件与镜像页
+
+const COMPONENT_SUBTABS = [
+  { id: 'components', label: '组件管理', ico: 'box', desc: 'Helm 插件按用途分类，点安装后再选服务器' },
+  { id: 'images', label: '镜像管理', ico: 'layers', desc: '常用基础镜像，点拉取后再选服务器' },
+  { id: 'node-images', label: '查看服务器内镜像', ico: 'server', desc: '按服务器查看、导入、导出、删除节点镜像' }
+];
+
+function componentSubTabOf(value) {
+  return COMPONENT_SUBTABS.some((tab) => tab.id === value) ? value : 'components';
 }
 
-function deployTargetSelectHTML() {
-  const hosts = deployTargetHosts();
-  if (!hosts.length) return '';
-  const selected = deployTargetHost();
+function goComponentsTab(tab) {
+  S.componentsTab = componentSubTabOf(tab);
+  goDeployTab('components');
+}
+
+function componentSubTabsHTML(active) {
+  return `<div class="panel-tabs" role="tablist" aria-label="组件与镜像子页签">
+    ${COMPONENT_SUBTABS.map((tab) => `<button class="panel-tab ${tab.id === active ? 'active' : ''}" role="tab" aria-selected="${tab.id === active}" data-action="components-subtab" data-tab="${tab.id}" title="${esc(tab.desc)}">${icon(tab.ico)} ${esc(tab.label)}</button>`).join('')}
+  </div>`;
+}
+
+// 节点级操作可用的服务器：kubeconfig 接入没有节点，读不了也拉不了镜像
+function deployNodeHosts() {
+  return S.hosts.filter((host) => (host.transport || 'ssh') !== 'kubeconfig');
+}
+
+function hostIsK3s(host) {
+  const k8s = host && S.detected[host.id] ? S.detected[host.id].k8s : null;
+  return !!(k8s && k8s.flavor === 'k3s');
+}
+
+// 插件安装只认 k3s；镜像拉取走 k3s ctr，也优先 k3s 节点（读取到之前先全给出）
+function deployOperationPool() {
+  const all = deployNodeHosts();
+  const k3s = all.filter(hostIsK3s);
+  return k3s.length ? k3s : all;
+}
+
+function pickInitialHostIds(pool) {
+  const active = activeHost();
+  if (active && pool.some((host) => host.id === active.id)) return [active.id];
+  return pool.length ? [pool[0].id] : [];
+}
+
+// HelmChart 是集群级资源：同一个集群只需要装一次
+function dedupeHostsByCluster(hosts) {
+  const seen = new Set();
+  const targets = [];
+  for (const host of hosts || []) {
+    const key = detectedClusterKey(host) || `host:${host.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    targets.push(host);
+  }
+  return targets;
+}
+
+// 「查看服务器内镜像」：一次只查看一台服务器，切换后重新读取该节点的镜像
+function nodeImagePool() {
+  return deployOperationPool();
+}
+
+function nodeImageHost() {
+  const pool = nodeImagePool();
+  if (!pool.length) return null;
+  return pool.find((host) => host.id === S.hostImageTarget) || pool.find((host) => host.id === S.activeHostId) || pool[0];
+}
+
+function nodeImageBarHTML(extra = '') {
+  const pool = nodeImagePool();
+  const current = nodeImageHost();
+  const options = pool.length
+    ? pool.map((host) => `<option value="${esc(host.id)}" ${current && current.id === host.id ? 'selected' : ''}>${esc(hostName(host))}${hostIsK3s(host) ? '' : '（未检测到 k3s）'}</option>`).join('')
+    : '<option value="">没有可用的服务器</option>';
   return `<div class="deploy-target">
-    <label for="deployHostSelect">${icon('server')} 目标服务器</label>
-    <select class="select" id="deployHostSelect" title="选择已安装 Kubernetes 的服务器">
-      ${hosts.map((host) => `<option value="${esc(host.id)}" ${selected && host.id === selected.id ? 'selected' : ''}>${esc(deployTargetLabel(host))}</option>`).join('')}
-    </select>
-    <button class="btn sm" data-action="deploy-images" ${selected ? '' : 'disabled'}>${icon('layers')} 查看当前k3s内镜像</button>
-    <span class="deploy-target-count"><i></i>${hosts.length} 个可用服务器</span>
+    <span class="deploy-target-label">${icon('server')} 服务器</span>
+    <select class="select" id="nodeImageHostSelect" aria-label="选择要查看镜像的服务器" ${pool.length ? '' : 'disabled'}>${options}</select>
+    ${extra}
+    <span class="tiny dim">共 ${pool.length} 台可查看</span>
   </div>`;
 }
 
@@ -1266,92 +1328,23 @@ const COMMUNITY_COMPONENTS = [
   }
 ];
 
-const BASE_IMAGES = [
-  {
-    id: 'mysql',
-    name: 'MySQL',
-    ico: 'layers',
-    kind: '数据库',
-    tone: 'purple',
-    image: 'mysql:8.4',
-    versions: ['8.4', '8.0'],
-    page: 'https://hub.docker.com/_/mysql/tags?name=8.4',
-    desc: '关系型数据库，适合业务库、配置和中小规模数据存储。'
-  },
-  {
-    id: 'postgresql',
-    name: 'PostgreSQL',
-    ico: 'layers',
-    kind: '数据库',
-    tone: 'purple',
-    image: 'postgres:17',
-    versions: ['17', '16'],
-    page: 'https://hub.docker.com/_/postgres/tags?name=17',
-    desc: '功能完整的关系型数据库，支持 JSON、GIS 和复杂查询。'
-  },
-  {
-    id: 'redis',
-    name: 'Redis',
-    ico: 'zap',
-    kind: '缓存',
-    tone: 'cyan',
-    image: 'redis:7.4',
-    versions: ['7.4', '7.2'],
-    page: 'https://hub.docker.com/_/redis/tags?name=7.4',
-    desc: '内存键值存储，适合缓存、会话和轻量队列场景。'
-  },
-  {
-    id: 'kafka',
-    name: 'Kafka',
-    ico: 'activity',
-    kind: '消息队列',
-    tone: 'warn',
-    image: 'apache/kafka:3.9.0',
-    versions: ['3.9.0', '3.8.0'],
-    page: 'https://hub.docker.com/r/apache/kafka/tags?name=3.9.0',
-    desc: '分布式事件流与消息队列，适合日志、异步解耦和流处理。'
-  },
-  {
-    id: 'java',
-    name: 'Java',
-    ico: 'terminal',
-    kind: '开发环境',
-    tone: 'info',
-    image: 'eclipse-temurin:21-jdk',
-    versions: ['8-jdk', '17-jdk', '21-jdk', '25-jdk'],
-    page: 'https://hub.docker.com/_/eclipse-temurin/tags?name=21-jdk',
-    desc: 'Eclipse Temurin JDK，适合构建和运行 Java 服务。'
-  },
-  {
-    id: 'go',
-    name: 'Go',
-    ico: 'terminal',
-    kind: '开发环境',
-    tone: 'info',
-    image: 'golang:1.24',
-    versions: ['1.24', '1.23'],
-    page: 'https://hub.docker.com/_/golang/tags?name=1.24',
-    desc: '官方 Go 工具链，适合编译和运行 Go 服务。'
-  }
-];
-
-function componentCardHTML(component, isK3s) {
+function componentCardHTML(component, installable) {
   return `<div class="card card-pad">
     <div class="stat-ico" style="margin-bottom:10px">${icon(component.ico)}</div>
     <div class="row" style="gap:8px"><h3 style="margin:0;font-size:14px">${esc(component.name)}</h3>${badge('Helm', 'info')}</div>
     <p class="small muted" style="line-height:1.7;min-height:54px;margin:8px 0">${esc(component.desc)}</p>
     <div class="tiny dim mono" style="margin-bottom:8px">${esc(component.namespace)}</div>
     <div class="tiny dim" style="line-height:1.6;margin-bottom:12px">${esc(component.note)}</div>
-    <button class="btn primary" data-action="component-install" data-component="${esc(component.id)}" ${isK3s ? '' : 'disabled'}>${icon('rocket')} 安装插件</button>
+    <button class="btn primary" data-action="component-install" data-component="${esc(component.id)}" ${installable ? '' : 'disabled'} title="${installable ? '安装时选择目标服务器，可多选（同集群自动去重）' : '需要至少一台已装好 k3s 的服务器'}">${icon('rocket')} 安装插件</button>
   </div>`;
 }
 
-function componentGroupHTML(group, isK3s) {
+function componentGroupHTML(group, installable) {
   const items = COMMUNITY_COMPONENTS.filter((component) => component.category === group.id);
   if (!items.length) return '';
   return `<section class="component-group">
     <div class="component-group-head"><h3>${esc(group.name)}</h3><span>${esc(group.desc)}</span></div>
-    <div class="grid grid-3">${items.map((component) => componentCardHTML(component, isK3s)).join('')}</div>
+    <div class="grid grid-3">${items.map((component) => componentCardHTML(component, installable)).join('')}</div>
   </section>`;
 }
 
@@ -1382,16 +1375,27 @@ function imageRepoOf(ref) {
 }
 
 function baseImageCardHTML(image) {
-  const target = deployTargetHost();
   const versions = Array.isArray(image.versions) && image.versions.length ? image.versions : [imageTagOf(image.image)];
-  const currentVersion = S.baseImageVersions[image.id] || imageTagOf(image.image);
+  // 版本可能刚被改过，选中值要落回列表里，避免下拉和下面的镜像名对不上
+  const fallbackVersion = imageTagOf(image.image);
+  const wantedVersion = S.baseImageVersions[image.id] || fallbackVersion;
+  const currentVersion = versions.indexOf(wantedVersion) >= 0
+    ? wantedVersion
+    : (versions.indexOf(fallbackVersion) >= 0 ? fallbackVersion : versions[0]);
   const ref = `${imageRepoOf(image.image)}:${currentVersion}`;
   const pullRef = configuredImageRef(ref);
-  const page = `${String(image.page).split('?')[0]}?name=${encodeURIComponent(currentVersion)}`;
+  const page = image.page ? `${String(image.page).split('?')[0]}?name=${encodeURIComponent(currentVersion)}` : '';
+  const tone = normalizeTone(image.tone);
+  const toneBadge = isCustomTone(tone)
+    ? `<span class="badge custom"${toneStyle(tone)}>${esc(imageKindLabel(image))}</span>`
+    : badge(imageKindLabel(image), tone);
   return `<div class="card card-pad base-image-card">
     <div class="row" style="justify-content:space-between;align-items:flex-start;gap:8px">
-      <div class="stat-ico">${icon(image.ico)}</div>
-      ${badge(image.kind, image.tone)}
+      <div class="stat-ico ${toneClass(tone)}"${toneStyle(tone)}>${icon(image.ico)}</div>
+      <div class="row" style="gap:4px;align-items:center">
+        ${image.kind ? toneBadge : ''}
+        <button class="icon-btn" style="width:28px;height:28px" data-action="image-menu" data-image="${esc(image.id)}" title="编辑或删除这个镜像" aria-haspopup="menu" aria-expanded="false">${icon('more')}</button>
+      </div>
     </div>
     <h3 style="margin:10px 0 0;font-size:14px">${esc(image.name)}</h3>
     <label class="image-version-row" for="image-version-${esc(image.id)}">
@@ -1406,7 +1410,7 @@ function baseImageCardHTML(image) {
       <button class="icon-btn copy-hover-btn" data-action="image-copy" data-image="${esc(ref)}" title="复制镜像名" aria-label="复制镜像名">${icon('copy')}</button>
     </div>
     <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:8px">
-      <button class="btn sm" data-action="image-pull" data-image="${esc(ref)}" title="${target ? `拉取到 ${esc(hostName(target))} 的本地镜像库` : '请先添加并选择目标服务器'}" ${target ? '' : 'disabled'}>${icon('download')} 拉取镜像</button>
+      <button class="btn sm" data-action="image-pull" data-image="${esc(ref)}" title="拉取时选择目标服务器，可多选">${icon('download')} 拉取镜像</button>
       <span class="copy-command-menu">
         <button class="btn sm copy-command-trigger" type="button" aria-haspopup="true" aria-label="复制镜像拉取命令" title="鼠标悬浮选择 docker 或 k3s 拉取命令">${icon('copy')} 复制拉取命令 <span class="copy-command-caret">▾</span></button>
         <span class="copy-command-pop" role="menu">
@@ -1414,7 +1418,7 @@ function baseImageCardHTML(image) {
           <button class="copy-command-item" type="button" role="menuitem" data-action="image-pull-copy" data-command="k3s ctr -n k8s.io images pull ${esc(pullRef)}" title="复制 k3s ctr pull 命令">${icon('copy')} k3s pull</button>
         </span>
       </span>
-      <a class="btn sm" href="${esc(page)}" target="_blank" rel="noopener noreferrer" title="打开 Docker Hub 镜像页">${icon('external')} 镜像页</a>
+      ${page ? `<a class="btn sm" href="${esc(page)}" target="_blank" rel="noopener noreferrer" title="打开镜像页">${icon('external')} 镜像页</a>` : ''}
     </div>
     <div class="image-pull-status" data-pull-status aria-live="polite"></div>
   </div>`;
@@ -1423,7 +1427,7 @@ function baseImageCardHTML(image) {
 function updateBaseImageVersion(select) {
   if (!select) return;
   const id = select.dataset.imageVersion;
-  const image = BASE_IMAGES.find((item) => item.id === id);
+  const image = findBaseImage(id);
   const card = select.closest('.base-image-card');
   if (!image || !card) return;
   const version = select.value;
@@ -1443,7 +1447,7 @@ function updateBaseImageVersion(select) {
       : `k3s ctr -n k8s.io images pull ${fullRef}`;
   });
   const page = card.querySelector('a[href]');
-  if (page) page.href = `${String(image.page).split('?')[0]}?name=${encodeURIComponent(version)}`;
+  if (page && image.page) page.href = `${String(image.page).split('?')[0]}?name=${encodeURIComponent(version)}`;
   const status = card.querySelector('[data-pull-status]');
   if (status) {
     status.className = 'image-pull-status';
@@ -1451,16 +1455,665 @@ function updateBaseImageVersion(select) {
   }
 }
 
+// 分类页签前面的「查看全部」，默认就停在这里
+const IMAGE_ALL_CATEGORY = { id: 'all', label: '查看全部' };
+
+/* ============================================================
+ * 镜像清单：分类和镜像都来自 data/image-management/images.json
+ * ============================================================ */
+function imageCatalog() {
+  return (S.imageCatalog && Array.isArray(S.imageCatalog.images) && Array.isArray(S.imageCatalog.categories))
+    ? S.imageCatalog
+    : { categories: [], images: [], skipped: 0, file: '', error: '', missing: false };
+}
+
+function imageCatalogCategories() {
+  return imageCatalog().categories;
+}
+
+function imageCatalogImages() {
+  return imageCatalog().images;
+}
+
+function findBaseImage(id) {
+  return imageCatalogImages().find((item) => item.id === id) || null;
+}
+
+// 打开页面时读一次清单（服务端每次请求都重新读盘），改完 images.json 刷新浏览器即可
+async function loadImageCatalog() {
+  if (S.imageCatalog && S.imageCatalog.loaded) return S.imageCatalog;
+  try {
+    const data = await api('/images/catalog');
+    S.imageCatalog = {
+      categories: Array.isArray(data.categories) ? data.categories : [],
+      images: Array.isArray(data.images) ? data.images : [],
+      skipped: Number(data.skipped) || 0,
+      missing: Boolean(data.missing),
+      file: data.file || 'data/image-management/images.json',
+      error: '',
+      loaded: true
+    };
+  } catch (err) {
+    S.imageCatalog = {
+      categories: [],
+      images: [],
+      skipped: 0,
+      missing: false,
+      file: 'data/image-management/images.json',
+      error: errorText(err),
+      loaded: true
+    };
+  }
+  return S.imageCatalog;
+}
+
+function imageCategoryTabs() {
+  return [IMAGE_ALL_CATEGORY, ...imageCatalogCategories()];
+}
+
 function baseImagesHTML() {
-  return `<section class="component-group">
-    <div class="component-group-head"><h3>基础镜像</h3><span>数据库、缓存、消息队列和开发环境常用官方镜像</span></div>
-    <div class="image-repo-bar">
+  const categoryId = imageCategoryId();
+  const tab = imageCategoryTabs().find((item) => item.id === categoryId) || IMAGE_ALL_CATEGORY;
+  const images = imageCategoryImages(categoryId);
+  const catalog = imageCatalog();
+  const bar = `<div class="image-repo-bar">
       <span class="image-repo-text">${icon('box')}<span>当前仓库：<b class="mono">${esc(S.imageRepository && S.imageRepository.repository ? S.imageRepository.repository : 'docker.io')}</b></span></span>
-      <button class="btn sm" data-action="image-repo-config">${icon('settings')} 仓库配置</button>
-    </div>
-    <p class="tiny dim" style="line-height:1.65;margin:-2px 0 10px">以下为示例 tag，请按目标架构和版本要求替换；复制后可直接用于 Pod 或 YAML 配置。Docker Hub 官方镜像没有固定 .tar 直链，可打开镜像页查看 tag，或用拉取命令下载后导出离线包。</p>
-    <div class="grid grid-3">${BASE_IMAGES.map(baseImageCardHTML).join('')}</div>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <button class="btn sm" data-action="image-new" title="新增一个镜像配置">${icon('plus')} 新增镜像配置</button>
+        <button class="btn sm" data-action="image-repo-config">${icon('settings')} 仓库配置</button>
+      </div>
+    </div>`;
+  // 清单读不出来时只留工具栏并说明原因；文件还不存在就当空清单，直接让人新增
+  if (catalog.error) {
+    return `<section class="component-group">${bar}
+    <div class="alert err">${icon('alert')}<div>读取镜像清单失败：${esc(catalog.error)}<div class="tiny dim" style="margin-top:6px">清单文件：<span class="mono">${esc(catalog.file)}</span>。修好后刷新页面。</div></div></div>
   </section>`;
+  }
+  const hasImages = images.length > 0;
+  return `<section class="component-group">
+    ${bar}
+    ${hasImages ? `<p class="tiny dim" style="line-height:1.65;margin:-2px 0 10px">以下为示例 tag，请按目标架构和版本要求替换。点「拉取镜像」后再选目标服务器（可多选），镜像会写进每台节点的本地镜像库；复制后的镜像名可直接用于 Pod 或 YAML。</p>` : ''}
+    ${imageCategoryTabsHTML()}
+    ${catalog.skipped ? `<div class="alert warn" style="margin-bottom:12px">${icon('alert')}<div>清单里有 ${catalog.skipped} 条配置缺少必要字段（分类要 id + label，镜像要 name + image），已跳过。</div></div>` : ''}
+    ${hasImages
+      ? `<div class="grid grid-3">${images.map(baseImageCardHTML).join('')}</div>`
+      : `<div class="alert info">${icon('box')}<div>「${esc(tab.label)}」下还没有镜像。</div></div>`}
+  </section>`;
+}
+
+function imageCategoryId() {
+  const wanted = String(S.imageCategory || '');
+  return imageCategoryTabs().some((item) => item.id === wanted) ? wanted : IMAGE_ALL_CATEGORY.id;
+}
+
+// 镜像归属：kind 按分类 id 匹配，改分类名称不影响归属；兼容老写法（kind 直接写分类名）
+function imageCategoryOf(image) {
+  const kind = String((image && image.kind) || '').trim();
+  if (!kind) return null;
+  const categories = imageCatalogCategories();
+  return categories.find((item) => item.id === kind) || categories.find((item) => item.label === kind) || null;
+}
+
+// 卡片角标显示分类名，而不是 kind 原文
+function imageKindLabel(image) {
+  const category = imageCategoryOf(image);
+  return category ? category.label : String((image && image.kind) || '').trim();
+}
+
+function imageCategoryImages(categoryId) {
+  const categories = imageCatalogCategories();
+  const images = imageCatalogImages();
+  if (categoryId === IMAGE_ALL_CATEGORY.id) {
+    // 「查看全部」按页签顺序分组排列，和上面的分类顺序保持一致
+    const grouped = categories.flatMap((category) => images.filter((item) => imageCategoryOf(item) === category));
+    // 兜底：kind 没有对应分类的镜像也要出现在全部里
+    return grouped.concat(images.filter((item) => !imageCategoryOf(item)));
+  }
+  const category = categories.find((item) => item.id === categoryId);
+  return category ? images.filter((item) => imageCategoryOf(item) === category) : [];
+}
+
+function imageCategoryTabsHTML() {
+  const current = imageCategoryId();
+  const tabs = imageCategoryTabs().map((category) => {
+    const active = category.id === current;
+    const isAll = category.id === IMAGE_ALL_CATEGORY.id;
+    const draggable = isAll ? '' : ` draggable="true" data-drag-category="${esc(category.id)}"`;
+    return `<button class="panel-tab ${active ? 'active' : ''}" role="tab" aria-selected="${active}" data-action="image-category" data-category="${esc(category.id)}"${draggable}>
+      <span>${esc(category.label)}</span>
+      ${isAll ? '' : `<span class="tab-del" data-action="image-category-delete" data-category="${esc(category.id)}" role="button" aria-label="删除分类 ${esc(category.label)}" title="删除分类">×</span>`}
+    </button>`;
+  }).join('');
+  return `<div class="panel-tabs sub" role="tablist" aria-label="镜像分类">${tabs}
+    <button class="panel-tab add" data-action="image-category-add" title="新增分类">${icon('plus')}</button>
+  </div>`;
+}
+
+/* ============================================================
+ * 镜像清单编辑：分类（页签）增删改名 + 单个镜像增删改
+ * 保存直接写回 data/image-management/images.json
+ * ============================================================ */
+const IMAGE_ICON_CHOICES = ['box', 'server', 'cluster', 'layers', 'rocket', 'activity', 'settings', 'refresh', 'expand', 'compress', 'search', 'terminal', 'cpu', 'link', 'download', 'filter', 'shield', 'zap', 'external', 'lock', 'eye', 'folder', 'file', 'upload', 'grid', 'play', 'stop', 'clock', 'scroll', 'power', 'sun', 'moon', 'arrow-left', 'alert'];
+const IMAGE_TONE_CHOICES = [
+  { value: 'purple', label: '紫', hex: '#a78bfa' },
+  { value: 'cyan', label: '青', hex: '#22d3ee' },
+  { value: 'ok', label: '绿', hex: '#34d399' },
+  { value: 'warn', label: '黄', hex: '#fbbf24' },
+  { value: 'info', label: '蓝', hex: '#60a5fa' },
+  { value: 'err', label: '红', hex: '#fb7185' },
+  { value: 'neutral', label: '灰', hex: '#94a3b8' }
+];
+
+// 配色可以存预置名字（purple/ok/...），也可以存自定义的 #rrggbb
+const TONE_HEX_RE = /^#[0-9a-f]{6}$/i;
+function isCustomTone(tone) {
+  return TONE_HEX_RE.test(String(tone || '').trim());
+}
+function normalizeTone(tone) {
+  const value = String(tone || '').trim();
+  if (!value) return 'neutral';
+  if (isCustomTone(value)) return value.toLowerCase();
+  return IMAGE_TONE_CHOICES.some((item) => item.value === value) ? value : 'neutral';
+}
+function toneHexOf(tone) {
+  if (isCustomTone(tone)) return String(tone).toLowerCase();
+  const preset = IMAGE_TONE_CHOICES.find((item) => item.value === tone);
+  return preset ? preset.hex : '#94a3b8';
+}
+function toneClass(tone) {
+  return isCustomTone(tone) ? 'tone-custom' : `tone-${tone}`;
+}
+function toneStyle(tone) {
+  return isCustomTone(tone) ? ` style="--tone:${esc(tone)}"` : '';
+}
+function hexToRgb(hex) {
+  const n = parseInt(String(hex).slice(1), 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+function rgbToHex(r, g, b) {
+  const part = (v) => Math.max(0, Math.min(255, Math.round(Number(v) || 0))).toString(16).padStart(2, '0');
+  return `#${part(r)}${part(g)}${part(b)}`;
+}
+
+// 保存接口统一返回整份清单，直接替换内存里的数据
+function applyImageCatalog(catalog) {
+  if (!catalog || !Array.isArray(catalog.categories) || !Array.isArray(catalog.images)) return;
+  S.imageCatalog = {
+    categories: catalog.categories,
+    images: catalog.images,
+    skipped: Number(catalog.skipped) || 0,
+    missing: false,
+    file: (S.imageCatalog && S.imageCatalog.file) || 'data/image-management/images.json',
+    error: '',
+    loaded: true
+  };
+}
+
+async function saveImageCatalog(path, method, body) {
+  const data = await api(path, { method, body });
+  applyImageCatalog(data.catalog);
+  return data.catalog;
+}
+
+function openImageEditor(image) {
+  const editing = Boolean(image && image.id);
+  const categories = imageCatalogCategories();
+  const tabId = imageCategoryId();
+  const current = image || {
+    name: '',
+    kind: tabId === IMAGE_ALL_CATEGORY.id ? '' : tabId,
+    image: '',
+    versions: [],
+    ico: 'box',
+    tone: 'neutral',
+    page: '',
+    desc: ''
+  };
+  const versionsText = Array.isArray(current.versions) ? current.versions.join(', ') : '';
+  // 图标直接摆图标本身，选中项高亮；清单里写了不在候选里的图标时也保留可选
+  const rawIco = String(current.ico || '').trim();
+  const iconChoices = rawIco && !IMAGE_ICON_CHOICES.includes(rawIco) ? [rawIco].concat(IMAGE_ICON_CHOICES) : IMAGE_ICON_CHOICES;
+  let pickedIco = rawIco || 'box';
+  const initialTone = normalizeTone(current.tone);
+  let pickedTone = initialTone;
+  let customHex = isCustomTone(initialTone) ? initialTone : toneHexOf(initialTone);
+  const customRgb = hexToRgb(customHex);
+  openModal({
+    title: editing ? '编辑镜像' : '新增镜像',
+    size: 'narrow',
+    body: `
+      <label class="field">镜像名称
+        <input class="input" id="imageEditName" autocomplete="off" spellcheck="false" placeholder="例如 MySQL" value="${esc(current.name || '')}" />
+      </label>
+      <div class="grid two" style="gap:10px;margin-top:12px">
+        <label class="field">分类
+          <select class="select" id="imageEditKind">
+            <option value="">无</option>
+            ${categories.map((item) => `<option value="${esc(item.id)}" ${item.id === (current.kind || '') ? 'selected' : ''}>${esc(item.label)}</option>`).join('')}
+          </select>
+        </label>
+      </div>
+      <div class="field" style="margin-top:12px">配色
+        <div class="tone-row" id="imageEditToneRow">
+          ${IMAGE_TONE_CHOICES.map((tone) => `<button type="button" class="tone-swatch ${tone.value === initialTone ? 'active' : ''}" data-tone="${tone.value}" style="--tone:${tone.hex}" title="${tone.label}" aria-pressed="${tone.value === initialTone}"><i></i></button>`).join('')}
+          <input type="color" class="tone-color-input ${isCustomTone(initialTone) ? 'active' : ''}" id="imageEditToneColor" value="${customHex}" title="自定义颜色：打开系统调色板" />
+          <button type="button" class="btn sm ghost tone-eye" id="imageEditToneEye" title="从屏幕上取一个颜色">${icon('eye')} 取色</button>
+        </div>
+        <div class="tone-custom-panel ${isCustomTone(initialTone) ? '' : 'hidden'}" id="imageEditToneCustom">
+          <div class="tone-line">色值
+            <input class="input tone-hex" id="imageEditToneHex" maxlength="7" autocomplete="off" spellcheck="false" value="${customHex}" />
+            <span class="tone-line-sep">RGB</span>
+            <input class="input tone-rgb" id="imageEditToneR" type="number" min="0" max="255" value="${customRgb.r}" />
+            <input class="input tone-rgb" id="imageEditToneG" type="number" min="0" max="255" value="${customRgb.g}" />
+            <input class="input tone-rgb" id="imageEditToneB" type="number" min="0" max="255" value="${customRgb.b}" />
+          </div>
+          <div class="tone-preview" id="imageEditTonePreview"></div>
+        </div>
+        <span class="help">卡片图标和分类角标的颜色；取色笔只在 localhost 或 HTTPS 下可用。</span>
+      </div>
+      <label class="field" style="margin-top:12px">镜像地址
+        <input class="input" id="imageEditImage" autocomplete="off" spellcheck="false" placeholder="例如 mysql:8.4" value="${esc(current.image || '')}" />
+        <span class="help">写完整的 <span class="code-inline">仓库/镜像:tag</span>，卡片上默认显示这个 tag。</span>
+      </label>
+      <label class="field" style="margin-top:12px">版本（可选）
+        <input class="input" id="imageEditVersions" autocomplete="off" spellcheck="false" placeholder="8.4, 8.0" value="${esc(versionsText)}" />
+        <span class="help">逗号分隔；留空时用镜像地址里的 tag。</span>
+      </label>
+      <div class="field" style="margin-top:12px">图标
+        <div class="icon-grid" id="imageEditIcoGrid" role="listbox" aria-label="选择图标">
+          ${iconChoices.map((name) => `<button type="button" class="icon-choice ${name === pickedIco ? 'active' : ''}" role="option" aria-selected="${name === pickedIco}" data-ico="${esc(name)}" title="${esc(name)}">${icon(name)}</button>`).join('')}
+        </div>
+      </div>
+      <label class="field" style="margin-top:12px">镜像页地址（可选）
+        <input class="input" id="imageEditPage" autocomplete="off" spellcheck="false" placeholder="https://hub.docker.com/_/mysql/tags" value="${esc(current.page || '')}" />
+        <span class="help">留空时卡片上不显示「镜像页」按钮。</span>
+      </label>
+      <label class="field" style="margin-top:12px">说明（可选）
+        <textarea class="textarea" id="imageEditDesc" rows="2" placeholder="一句话说明这个镜像的用途">${esc(current.desc || '')}</textarea>
+      </label>`,
+    foot: `<button class="btn ghost" data-close="1">取消</button>
+           <button class="btn primary" id="imageEditSave">${icon('check')} 保存</button>`,
+    onMount(box) {
+      const nameInput = $('#imageEditName', box.el);
+      const imageInput = $('#imageEditImage', box.el);
+      const btn = $('#imageEditSave', box.el);
+      const icoGrid = $('#imageEditIcoGrid', box.el);
+      const toneRow = $('#imageEditToneRow', box.el);
+      const toneColor = $('#imageEditToneColor', box.el);
+      const tonePanel = $('#imageEditToneCustom', box.el);
+      const toneHexInput = $('#imageEditToneHex', box.el);
+      const toneR = $('#imageEditToneR', box.el);
+      const toneG = $('#imageEditToneG', box.el);
+      const toneB = $('#imageEditToneB', box.el);
+      const tonePreview = $('#imageEditTonePreview', box.el);
+      const toneEye = $('#imageEditToneEye', box.el);
+
+      const renderTonePreview = () => {
+        const custom = isCustomTone(pickedTone);
+        const preset = IMAGE_TONE_CHOICES.find((item) => item.value === pickedTone);
+        tonePreview.innerHTML = `<span class="badge ${custom ? 'custom' : esc(pickedTone)}"${custom ? ` style="--tone:${esc(pickedTone)}"` : ''}>分类</span>
+          <span class="stat-ico ${toneClass(pickedTone)}"${toneStyle(pickedTone)}>${icon(pickedIco || 'box')}</span>
+          <span class="tiny dim">${esc(custom ? pickedTone : (preset ? preset.label : pickedTone))}</span>`;
+      };
+      const paintToneSelection = () => {
+        toneRow.querySelectorAll('.tone-swatch').forEach((el) => {
+          const active = el.dataset.tone === pickedTone;
+          el.classList.toggle('active', active);
+          el.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+        toneColor.classList.toggle('active', isCustomTone(pickedTone));
+        tonePanel.classList.toggle('hidden', !isCustomTone(pickedTone));
+        renderTonePreview();
+      };
+      const setCustomTone = (hex, opts = {}) => {
+        const value = String(hex || '').trim().toLowerCase();
+        if (!TONE_HEX_RE.test(value)) return;
+        customHex = value;
+        pickedTone = value;
+        toneColor.value = value;
+        if (opts.syncHex !== false) toneHexInput.value = value;
+        if (opts.syncRgb !== false) {
+          const rgb = hexToRgb(value);
+          toneR.value = rgb.r;
+          toneG.value = rgb.g;
+          toneB.value = rgb.b;
+        }
+        paintToneSelection();
+      };
+
+      toneRow.querySelectorAll('.tone-swatch').forEach((el) => {
+        el.addEventListener('click', () => {
+          pickedTone = el.dataset.tone;
+          customHex = toneHexOf(pickedTone);
+          const rgb = hexToRgb(customHex);
+          toneColor.value = customHex;
+          toneHexInput.value = customHex;
+          toneR.value = rgb.r;
+          toneG.value = rgb.g;
+          toneB.value = rgb.b;
+          paintToneSelection();
+        });
+      });
+      toneColor.addEventListener('input', () => setCustomTone(toneColor.value));
+      toneHexInput.addEventListener('input', () => {
+        const value = toneHexInput.value.trim();
+        if (TONE_HEX_RE.test(value)) setCustomTone(value, { syncHex: false });
+      });
+      [toneR, toneG, toneB].forEach((input) => {
+        input.addEventListener('input', () => {
+          if (input.value === '') return;
+          setCustomTone(rgbToHex(toneR.value, toneG.value, toneB.value));
+        });
+      });
+      // 屏幕取色：EyeDropper 只在安全上下文（localhost / HTTPS）里存在
+      if (!window.EyeDropper) {
+        toneEye.disabled = true;
+        toneEye.title = '取色笔只在 localhost 或 HTTPS 下可用，当前地址不支持';
+        toneEye.classList.add('is-disabled');
+      } else {
+        toneEye.addEventListener('click', async () => {
+          try {
+            const result = await new window.EyeDropper().open();
+            if (result && result.sRGBHex) setCustomTone(result.sRGBHex);
+          } catch (err) {
+            // 用户按 Esc 取消，不用提示
+          }
+        });
+      }
+      renderTonePreview();
+      paintToneSelection();
+
+      icoGrid.addEventListener('click', (event) => {
+        const choice = event.target.closest ? event.target.closest('.icon-choice') : null;
+        if (!choice) return;
+        pickedIco = choice.dataset.ico;
+        icoGrid.querySelectorAll('.icon-choice').forEach((el) => {
+          const active = el === choice;
+          el.classList.toggle('active', active);
+          el.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+      });
+      btn.addEventListener('click', async () => {
+        const payload = {
+          name: nameInput.value.trim(),
+          image: imageInput.value.trim(),
+          kind: $('#imageEditKind', box.el).value,
+          versions: $('#imageEditVersions', box.el).value,
+          ico: pickedIco,
+          tone: pickedTone,
+          page: $('#imageEditPage', box.el).value.trim(),
+          desc: $('#imageEditDesc', box.el).value.trim()
+        };
+        if (!payload.name) { toast('请填写镜像名称', 'error'); nameInput.focus(); return; }
+        if (!payload.image) { toast('请填写镜像地址', 'error'); imageInput.focus(); return; }
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> 保存中';
+        try {
+          await saveImageCatalog(
+            editing ? `/images/catalog/images/${encodeURIComponent(image.id)}` : '/images/catalog/images',
+            editing ? 'PUT' : 'POST',
+            payload
+          );
+          closeModal();
+          toast(editing ? '镜像已更新' : '镜像已新增', 'success', 2600);
+          renderView();
+        } catch (err) {
+          toast(errorText(err), 'error', 5000);
+          btn.disabled = false;
+          btn.innerHTML = `${icon('check')} 保存`;
+        }
+      });
+      setTimeout(() => nameInput.focus(), 50);
+    }
+  });
+}
+
+/* 镜像卡片右上角的「…」菜单：编辑 / 删除 */
+let imageActionMenuEl = null;
+let imageActionMenuAnchor = null;
+
+function closeImageActionMenu() {
+  if (!imageActionMenuEl) return;
+  imageActionMenuEl.remove();
+  imageActionMenuEl = null;
+  if (imageActionMenuAnchor && imageActionMenuAnchor.isConnected) {
+    imageActionMenuAnchor.setAttribute('aria-expanded', 'false');
+  }
+  imageActionMenuAnchor = null;
+}
+
+function openImageActionMenu(anchor, imageId) {
+  const image = findBaseImage(imageId);
+  if (!anchor || !image) return;
+  closeImageActionMenu();
+  const item = (action, iconName, label, danger = false) =>
+    `<button type="button" class="ctx-item${danger ? ' danger' : ''}" role="menuitem" data-action="${action}" data-image="${esc(image.id)}">${icon(iconName)}<span>${esc(label)}</span></button>`;
+  const menu = document.createElement('div');
+  menu.id = 'imageActionMenu';
+  menu.className = 'ctx-menu';
+  menu.setAttribute('role', 'menu');
+  menu.setAttribute('aria-label', `${image.name} 操作`);
+  menu.innerHTML = `${item('image-edit', 'edit', '编辑镜像')}<div class="ctx-sep"></div>${item('image-delete', 'trash', '删除镜像', true)}`;
+  menu.style.visibility = 'hidden';
+  menu.style.left = '0px';
+  menu.style.top = '0px';
+  document.body.appendChild(menu);
+  imageActionMenuEl = menu;
+  imageActionMenuAnchor = anchor;
+  anchor.setAttribute('aria-expanded', 'true');
+
+  const rect = anchor.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  const gap = 8;
+  let left = rect.right - menuRect.width;
+  left = Math.max(gap, Math.min(left, window.innerWidth - menuRect.width - gap));
+  let top = rect.bottom + 6;
+  if (top + menuRect.height > window.innerHeight - gap) {
+    top = Math.max(gap, rect.top - menuRect.height - 6);
+  }
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+  menu.style.visibility = '';
+
+  menu.addEventListener('click', () => closeImageActionMenu());
+  const first = menu.querySelector('.ctx-item');
+  if (first) first.focus({ preventScroll: true });
+}
+
+async function deleteBaseImage(id) {
+  const image = findBaseImage(id);
+  if (!image) return;
+  const ok = await confirmDialog({
+    title: '删除镜像',
+    message: `确定从镜像清单里删除 <b>${esc(image.name)}</b>（<span class="code-inline">${esc(image.image)}</span>）吗？<br><span class="tiny dim">只删除 images.json 里的这条配置，不影响节点上已经拉取的镜像。</span>`,
+    confirmText: '删除镜像',
+    danger: true
+  });
+  if (!ok) return;
+  try {
+    await saveImageCatalog(`/images/catalog/images/${encodeURIComponent(id)}`, 'DELETE');
+    toast('镜像已删除', 'success', 2600);
+    renderView();
+  } catch (err) {
+    toast(errorText(err), 'error', 5000);
+  }
+}
+
+// 删除分类：有镜像时二次确认，确认后连镜像配置一起删掉
+async function deleteImageCategory(id) {
+  const category = imageCatalogCategories().find((item) => item.id === id);
+  if (!category) return;
+  const images = imageCatalogImages().filter((item) => imageCategoryOf(item) === category);
+  const ok = await confirmDialog({
+    title: '删除分类',
+    message: images.length
+      ? `分类 <b>${esc(category.label)}</b> 下还有 <b>${images.length}</b> 个镜像配置。确认删除会把这个分类和这 ${images.length} 个镜像配置一起删掉（只删配置，不动仓库和节点上的镜像）。`
+      : `确认删除分类 <b>${esc(category.label)}</b> 吗？`,
+    confirmText: images.length ? `删除分类和 ${images.length} 个镜像` : '确认删除',
+    danger: true
+  });
+  if (!ok) return;
+  try {
+    await saveImageCatalog(`/images/catalog/categories/${encodeURIComponent(id)}`, 'DELETE');
+    if (S.imageCategory === id) S.imageCategory = IMAGE_ALL_CATEGORY.id;
+    toast('分类已删除', 'success', 2600);
+    renderView();
+  } catch (err) {
+    toast(errorText(err), 'error', 5000);
+  }
+}
+
+// 新增分类：直接在页签栏最右边长出一个待填写的小页签，点对勾保存
+let imageCategoryDraftEl = null;
+let imageCategoryDraftState = null; // { text }：页面重绘后把没保存的草稿接着摆出来
+
+// 取消就地新增分类：草稿直接收掉，把「+」按钮放回来
+function closeImageCategoryDraft() {
+  imageCategoryDraftState = null;
+  const draft = imageCategoryDraftEl;
+  imageCategoryDraftEl = null;
+  if (!draft) return;
+  const bar = draft.parentElement;
+  if (draft.isConnected) draft.remove();
+  const addBtn = bar ? bar.querySelector('[data-action="image-category-add"]') : null;
+  if (addBtn) addBtn.style.display = '';
+}
+
+function openImageCategoryDraft(opts = {}) {
+  const bar = document.querySelector('.panel-tabs.sub');
+  if (!bar) return;
+  const existed = bar.querySelector('.panel-tab-draft');
+  if (existed) {
+    const oldInput = existed.querySelector('.tab-draft-input');
+    if (oldInput && opts.focus !== false) oldInput.focus();
+    return;
+  }
+  const addBtn = bar.querySelector('[data-action="image-category-add"]');
+  const draft = document.createElement('span');
+  draft.className = 'panel-tab-draft';
+  draft.innerHTML = `<input class="tab-draft-input" maxlength="24" placeholder="分类名称" autocomplete="off" spellcheck="false" />
+    <button class="tab-draft-ok" type="button" title="保存分类">${icon('check')}</button>
+    <button class="tab-draft-cancel" type="button" title="取消">${icon('x')}</button>`;
+  bar.appendChild(draft);
+  imageCategoryDraftEl = draft;
+  if (addBtn) addBtn.style.display = 'none';
+  const input = draft.querySelector('.tab-draft-input');
+  input.value = String(opts.text || (imageCategoryDraftState && imageCategoryDraftState.text) || '');
+  imageCategoryDraftState = { text: input.value };
+  const okBtn = draft.querySelector('.tab-draft-ok');
+  const cancelBtn = draft.querySelector('.tab-draft-cancel');
+  const cancel = () => closeImageCategoryDraft();
+  const save = async () => {
+    const label = input.value.trim();
+    if (!label) {
+      toast('请填写分类名称', 'error');
+      input.focus();
+      return;
+    }
+    okBtn.disabled = true;
+    try {
+      const catalog = await saveImageCatalog('/images/catalog/categories', 'POST', { label });
+      const created = (catalog.categories || []).find((item) => item.label === label);
+      if (created) S.imageCategory = created.id;
+      imageCategoryDraftEl = null;
+      imageCategoryDraftState = null;
+      toast('分类已新增', 'success', 2200);
+      renderView();
+    } catch (err) {
+      toast(errorText(err), 'error', 5000);
+      okBtn.disabled = false;
+      input.focus();
+    }
+  };
+  okBtn.addEventListener('click', save);
+  cancelBtn.addEventListener('click', () => cancel());
+  input.addEventListener('input', () => {
+    imageCategoryDraftState = { text: input.value };
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      save();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      cancel();
+    }
+  });
+  if (opts.focus !== false) setTimeout(() => input.focus(), 30);
+}
+
+// 换页签 / 刷新数据会重绘页签栏，未保存的草稿要接着显示（不抢焦点）
+function restoreImageCategoryDraft() {
+  const onImagesTab = S.view === 'deploy'
+    && S.deployTab === 'components'
+    && componentSubTabOf(S.componentsTab) === 'images';
+  if (!onImagesTab) {
+    imageCategoryDraftState = null;
+    return;
+  }
+  if (!imageCategoryDraftState) return;
+  if (document.querySelector('.panel-tab-draft')) return;
+  openImageCategoryDraft({ text: imageCategoryDraftState.text, focus: false });
+}
+
+/* 分类页签拖动排序：拖动过程中直接移动 DOM，松手后把顺序写回清单 */
+let draggingImageCategory = '';
+
+function imageCategoryDragStart(event) {
+  const tab = event.target && event.target.closest ? event.target.closest('.panel-tab[data-drag-category]') : null;
+  if (!tab) return;
+  if (event.target.closest('.tab-del')) {
+    event.preventDefault();
+    return;
+  }
+  draggingImageCategory = tab.dataset.dragCategory;
+  tab.classList.add('dragging');
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move';
+    try {
+      event.dataTransfer.setData('text/plain', draggingImageCategory);
+    } catch (_) { /* 个别浏览器不允许写，忽略 */ }
+  }
+}
+
+function imageCategoryDragOver(event) {
+  if (!draggingImageCategory) return;
+  const bar = event.target.closest ? event.target.closest('.panel-tabs.sub') : null;
+  if (!bar) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+  const tab = event.target.closest('.panel-tab[data-drag-category]');
+  bar.querySelectorAll('.drag-over-before,.drag-over-after').forEach((el) => el.classList.remove('drag-over-before', 'drag-over-after'));
+  if (!tab || tab.dataset.dragCategory === draggingImageCategory) return;
+  const rect = tab.getBoundingClientRect();
+  tab.classList.add(event.clientX > rect.left + rect.width / 2 ? 'drag-over-after' : 'drag-over-before');
+}
+
+async function imageCategoryDrop(event) {
+  const bar = event.target.closest ? event.target.closest('.panel-tabs.sub') : null;
+  if (!bar || !draggingImageCategory) return;
+  event.preventDefault();
+  const dragged = Array.from(bar.querySelectorAll('[data-drag-category]')).find((el) => el.dataset.dragCategory === draggingImageCategory);
+  const target = event.target.closest('.panel-tab[data-drag-category]');
+  if (dragged && target && target !== dragged) {
+    const rect = target.getBoundingClientRect();
+    target.parentNode.insertBefore(dragged, event.clientX > rect.left + rect.width / 2 ? target.nextSibling : target);
+  }
+  const order = Array.from(bar.querySelectorAll('[data-drag-category]')).map((el) => el.dataset.dragCategory);
+  const before = imageCatalogCategories().map((item) => item.id);
+  if (!order.length || order.join(',') === before.join(',')) return;
+  try {
+    await saveImageCatalog('/images/catalog/categories', 'PUT', { order });
+  } catch (err) {
+    toast(errorText(err), 'error', 5000);
+  }
+  renderView();
+}
+
+function imageCategoryDragEnd() {
+  draggingImageCategory = '';
+  document.querySelectorAll('.panel-tab.dragging').forEach((el) => el.classList.remove('dragging'));
+  document.querySelectorAll('.drag-over-before,.drag-over-after').forEach((el) => el.classList.remove('drag-over-before', 'drag-over-after'));
 }
 
 function openImageRepositoryConfig() {
@@ -1469,11 +2122,11 @@ function openImageRepositoryConfig() {
     title: '镜像仓库配置',
     size: 'narrow',
     body: `
-      <div class="alert info" style="margin-bottom:14px">${icon('box')}<div>默认从公共仓库 <span class="code-inline">docker.io</span> 拉取。配置会保存到 <span class="code-inline">data/image-repository.json</span>，不会写入 config.json。</div></div>
-      <label class="field">仓库地址
+      <div class="alert info" style="margin-bottom:14px">${icon('box')}<div>默认从公共仓库 <span class="code-inline">docker.io</span> 拉取。配置会保存到 <span class="code-inline">data/image-management/images-repository.json</span></div></div>
+      <label class="field" style="margin-bottom:16px">仓库地址
         <input class="input" id="imageRepoUrl" autocomplete="off" spellcheck="false" placeholder="docker.io 或 harbor.example.com" value="${esc(current.repository || 'docker.io')}" />
+        <span class="help">可填写域名、IP 或带端口地址；需要路径前缀时也可填写，例如 <span class="code-inline">registry.example.com/mirror</span>。</span>
       </label>
-      <div class="tiny dim" style="margin:-4px 0 12px">可填写域名、IP 或带端口地址；需要路径前缀时也可填写，例如 registry.example.com/mirror。</div>
       <div class="grid two" style="gap:10px">
         <label class="field">用户名（可选）
           <input class="input" id="imageRepoUser" autocomplete="off" spellcheck="false" placeholder="私有仓库用户名" value="${esc(current.username || '')}" />
@@ -1542,23 +2195,202 @@ function communityChartYaml(component) {
 
 function renderDeployComponents() {
   const view = $('#view');
-  const host = deployTargetHost();
-  const ready = host && clusterCapable(host);
-  const k8s = host && S.detected[host.id] ? S.detected[host.id].k8s : null;
-  const isK3s = !!(ready && k8s && k8s.flavor === 'k3s');
+  const tab = componentSubTabOf(S.componentsTab);
+  S.componentsTab = tab;
+  const body = tab === 'images'
+    ? baseImagesManagerHTML()
+    : tab === 'node-images'
+      ? nodeImagesHTML()
+      : componentsCatalogHTML();
   view.innerHTML = `${DEMO ? demoBanner() : ''}${deployCenterHead('components')}
-    ${deployTargetSelectHTML()}
-    ${!ready ? `<div class="alert warn">${icon('alert')}<div>没有已安装 Kubernetes 的服务器。插件暂不能安装；下方基础镜像仍可直接复制使用。</div></div>` : ''}
-    ${ready && !isK3s ? `<div class="alert warn">${icon('alert')}<div>当前入口不是 k3s；插件安装通过 k3s 内置的 HelmChart 控制器完成，暂不适用于外部 Kubernetes。基础镜像仍可直接复制使用。</div></div>` : ''}
-    <div class="alert info" style="margin-bottom:16px">${icon('box')}<div>插件通过 k3s 内置的 Helm Controller 异步安装，节点需要能访问对应 chart 仓库；基础镜像分类不依赖集群，可直接复制镜像名。</div></div>
+    ${componentSubTabsHTML(tab)}
+    ${body}`;
+  if (tab === 'node-images') {
+    const host = nodeImageHost();
+    if (host && !S.hostImages[host.id]) loadNodeImages().catch(() => {});
+  }
+}
+
+// 子页签一：组件管理（这里不选服务器，安装时再弹选择器）
+function componentsCatalogHTML() {
+  const pool = deployOperationPool();
+  const installable = pool.length > 0;
+  return `${!pool.length ? `<div class="alert warn">${icon('alert')}<div>还没有可用的服务器。插件安装需要通过 k3s 内置的 HelmChart 控制器完成，请先添加并部署好 k3s 节点。</div></div>` : ''}
+    <div class="alert info" style="margin-bottom:16px">${icon('box')}<div>点「安装插件」后会弹出服务器列表：可以多选，同一个集群只会安装一次；插件由 k3s 内置 Helm Controller 异步安装，节点需要能访问对应 chart 仓库。</div></div>
     <div class="component-catalog">
-      ${COMPONENT_GROUPS.map((group) => componentGroupHTML(group, isK3s)).join('')}
-      ${baseImagesHTML()}
+      ${COMPONENT_GROUPS.map((group) => componentGroupHTML(group, installable)).join('')}
     </div>`;
 }
 
-function pullBaseImage(host, image, button) {
-  if (!host) { toast('请先选择目标服务器', 'error'); return; }
+// 子页签二：镜像管理（同样不选服务器，拉取时再弹选择器）
+function baseImagesManagerHTML() {
+  const pool = deployOperationPool();
+  return `${!pool.length ? `<div class="alert warn">${icon('alert')}<div>还没有可用的服务器。镜像需要拉取到具体节点，请先添加服务器。</div></div>` : ''}
+    <div class="alert info" style="margin-bottom:16px">${icon('layers')}<div>点「拉取镜像」后会弹出服务器列表，可以多选；镜像按节点独立存储，会逐台写入所选节点的本地镜像库。</div></div>
+    <div class="component-catalog">${baseImagesHTML()}</div>`;
+}
+
+// 子页签三：查看服务器内镜像（单选服务器，切换后看到该节点上的镜像）
+function nodeImagesHTML() {
+  const pool = nodeImagePool();
+  const host = nodeImageHost();
+  if (!pool.length) {
+    return `${nodeImageBarHTML()}<div class="alert warn">${icon('alert')}<div>还没有可操作的服务器。请先添加服务器并完成 k3s 部署。</div></div>`;
+  }
+  const toolbar = `<button class="btn sm" data-action="node-images-import" title="先选服务器（可多选），再上传离线 .tar 镜像包">${icon('upload')} 导入离线镜像</button>`;
+  return `${nodeImageBarHTML(toolbar)}
+    ${host ? `${nodeImageFilterBarHTML()}<div id="nodeImagesResult">${nodeImageCardHTML(host)}</div>` : `<div class="alert warn">${icon('alert')}<div>还没有选择服务器。用上方的服务器下拉框切换即可看到各节点上的镜像。</div></div>`}`;
+}
+
+// 本地筛选：只在已读到的镜像里过滤，不再请求节点
+function nodeImageFilters() {
+  const filters = S.hostImageFilters || {};
+  return {
+    name: String(filters.name || '').trim().toLowerCase(),
+    id: String(filters.id || '').trim().toLowerCase()
+  };
+}
+
+function nodeImageFilterBarHTML() {
+  const { name, id } = nodeImageFilters();
+  const active = !!(name || id);
+  return `<div class="row node-image-filters" style="gap:10px;flex-wrap:wrap;align-items:flex-end;margin:0 0 14px">
+    <label class="field">镜像名称
+      <input class="input" id="nodeImageNameFilter" placeholder="按镜像名称过滤" aria-label="按镜像名称过滤" value="${esc((S.hostImageFilters || {}).name || '')}" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="field">镜像 ID
+      <input class="input" id="nodeImageIdFilter" placeholder="按镜像id过滤" aria-label="按镜像id过滤" value="${esc((S.hostImageFilters || {}).id || '')}" autocomplete="off" spellcheck="false" />
+    </label>
+    <button class="btn sm" data-action="node-images-filters-reset" ${active ? '' : 'disabled'}>${icon('x')} 清空筛选</button>
+  </div>`;
+}
+
+// 输入时只重绘结果区，避免输入框失焦
+function refreshNodeImageResult() {
+  const box = document.getElementById('nodeImagesResult');
+  const host = nodeImageHost();
+  if (!box || !host) return;
+  box.innerHTML = nodeImageCardHTML(host);
+  const reset = document.querySelector('[data-action="node-images-filters-reset"]');
+  if (reset) {
+    const { name, id } = nodeImageFilters();
+    reset.disabled = !(name || id);
+  }
+}
+
+// ---------------- 节点镜像：表格 / 卡片 / 读取
+
+let nodeImagesLoading = false;
+
+function nodeImageTableHTML(host, state) {
+  const images = Array.isArray(state.images) ? state.images : [];
+  const { name: nameQuery, id: idQuery } = nodeImageFilters();
+  const visible = images.filter((item) => {
+    if (nameQuery) {
+      const tags = (Array.isArray(item.repoTags) ? item.repoTags : []).join(' ').toLowerCase();
+      if (!tags.includes(nameQuery)) return false;
+    }
+    if (idQuery) {
+      const rawId = String(item.id || '').toLowerCase();
+      if (!rawId.includes(idQuery)) return false;
+    }
+    return true;
+  });
+  const filtering = !!(nameQuery || idQuery);
+  const countText = filtering
+    ? `匹配 ${visible.length} / ${images.length} 个镜像`
+    : `${images.length} 个镜像`;
+  const toolbar = `<div class="row" style="justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+    <div class="row" style="gap:8px;align-items:baseline;flex-wrap:wrap">
+      <b class="mono">${esc(hostName(host))}</b>
+      <span class="tiny dim">${esc(hostAddress(host))} · ${countText}</span>
+    </div>
+    <button class="btn sm" data-action="node-images-refresh" title="重新从这台节点读取镜像列表">${icon('refresh')} 刷新</button>
+  </div>`;
+  if (!images.length) {
+    return `${toolbar}<div class="alert info">${icon('box')}<div>这台节点上还没有读取到镜像。可以刷新重试，或确认 k3s / containerd 已启动。</div></div>`;
+  }
+  if (!visible.length) {
+    return `${toolbar}<div class="alert info">${icon('search')}<div>没有匹配的镜像：当前筛选条件 ${nameQuery ? `名称含 <b class="mono">${esc(nameQuery)}</b>` : ''}${nameQuery && idQuery ? '、' : ''}${idQuery ? `ID 含 <b class="mono">${esc(idQuery)}</b>` : ''}。可以改一下关键字或清空筛选。</div></div>`;
+  }
+  const rows = visible.map((item) => {
+    const tags = Array.isArray(item.repoTags) ? item.repoTags.filter(Boolean) : [];
+    const primary = tags[0] || '<none>';
+    const extra = tags.slice(1);
+    const shortId = String(item.id || '').replace(/^sha256:/, '').slice(0, 12) || '-';
+    return `<tr>
+      <td class="primary">
+        <div class="image-name-row">
+          <span class="mono">${esc(primary)}</span>
+          ${primary !== '<none>' ? `<button class="icon-btn inline-copy-btn" data-action="node-image-copy" data-image="${esc(primary)}" title="复制镜像名" aria-label="复制镜像名">${icon('copy')}</button>` : ''}
+        </div>
+        ${extra.length ? `<div class="tiny dim mono" style="margin-top:2px">${extra.map((tag) => esc(tag)).join('<br>')}</div>` : ''}
+      </td>
+      <td class="mono" title="${esc(item.id || '')}">${esc(shortId)}</td>
+      <td class="right">${esc(formatBytes(item.size))}</td>
+      <td class="right">
+        <div class="row-actions" style="opacity:1">
+          <button class="icon-btn" data-action="node-image-download" data-host="${esc(host.id)}" data-image="${esc(primary)}" title="导出并下载镜像 tar" aria-label="导出并下载镜像 tar" ${primary === '<none>' ? 'disabled' : ''}>${icon('download')}</button>
+          <button class="icon-btn danger" data-action="node-image-delete" data-host="${esc(host.id)}" data-image-id="${esc(item.id || '')}" data-image-label="${esc(primary)}" title="删除镜像（含该镜像的所有 tag）" aria-label="删除镜像" ${item.id ? '' : 'disabled'}>${icon('trash')}</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+  return `${toolbar}<div class="table-wrap"><table class="data">
+    <thead><tr><th>镜像</th><th>镜像 ID</th><th class="right">大小</th><th class="right">操作</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+}
+
+function nodeImageCardHTML(host) {
+  const state = S.hostImages[host.id];
+  let body;
+  if (!state) {
+    body = `<div class="alert info">${icon('refresh')}<div>正在读取 ${esc(hostName(host))} 的节点镜像…</div></div>`;
+  } else if (state.error) {
+    body = `<div class="alert err">${icon('alert')}<div>读取 ${esc(hostName(host))} 的镜像失败：${esc(state.error)}</div>
+      <button class="btn sm" data-action="node-images-refresh">${icon('refresh')} 重试</button></div>`;
+  } else {
+    body = nodeImageTableHTML(host, state);
+  }
+  return `<div class="card card-pad" style="margin-bottom:14px">${body}</div>`;
+}
+
+async function loadNodeImages(force = false) {
+  const host = nodeImageHost();
+  const poolIds = new Set(nodeImagePool().map((item) => item.id));
+  for (const key of Object.keys(S.hostImages || {})) {
+    if (!poolIds.has(key)) delete S.hostImages[key];
+  }
+  if (!host) { renderNodeImagesView(); return; }
+  const cached = S.hostImages[host.id];
+  if (!force && cached && !cached.loading && !cached.error) return;
+  if (nodeImagesLoading) return;
+  nodeImagesLoading = true;
+  S.hostImages[host.id] = { loading: true, images: [] };
+  try {
+    const data = await api(`/hosts/${encodeURIComponent(host.id)}/images`);
+    S.hostImages[host.id] = { images: data.images || [], total: data.total, fetchedAt: data.fetchedAt };
+  } catch (err) {
+    S.hostImages[host.id] = { images: [], error: errorText(err) };
+  } finally {
+    nodeImagesLoading = false;
+  }
+  renderNodeImagesView();
+}
+
+// 只在还停留在「查看服务器内镜像」时才重绘，避免打断其它页面
+function renderNodeImagesView() {
+  if (S.view === 'deploy' && S.deployTab === 'components' && componentSubTabOf(S.componentsTab) === 'node-images') renderView();
+}
+
+/**
+ * 把镜像拉取到多台节点：镜像按节点独立存储，逐台执行，最后给出汇总。
+ * input 可以是单台 host 或 host 数组。
+ */
+async function pullBaseImage(input, image, button) {
+  const hosts = Array.isArray(input) ? input.filter(Boolean) : (input ? [input] : []);
+  if (!hosts.length) { toast('请先选择要拉取的服务器', 'error'); return; }
   if (!image) return;
   const original = button ? button.innerHTML : '';
   const card = button ? button.closest('.card') : null;
@@ -1577,28 +2409,40 @@ function pullBaseImage(host, image, button) {
     button.setAttribute('aria-busy', 'true');
     button.innerHTML = '<span class="spinner"></span> 拉取中…';
   }
-  setStatus('running', `正在拉取 <span class="mono">${esc(image)}</span>，大镜像可能需要几分钟，请稍候…`);
+  const failed = [];
+  let done = 0;
+  setStatus('running', `正在拉取 <span class="mono">${esc(image)}</span> 到 ${hosts.length} 台节点，大镜像可能需要几分钟…`);
   toast(`正在拉取 ${image}，大镜像可能需要几分钟…`, 'info', 4200);
-  return api(`/hosts/${encodeURIComponent(host.id)}/images/pull`, {
-    method: 'POST',
-    body: { image }
-  }).then(() => {
-    setStatus('ok', `拉取成功：<span class="mono">${esc(image)}</span> 已写入 <b>${esc(hostName(host))}</b> 的节点镜像库`);
-    toast('镜像拉取完成', 'success', 3000);
-    openHostImagesModal(host);
-  }).catch((err) => {
-    const message = errorText(err);
-    const html = /^拉取镜像失败/.test(message) ? esc(message) : `<b>拉取失败</b>：${esc(message)}`;
-    setStatus('err', html, message);
-    toast(message, 'error', 7000);
-  }).finally(() => {
+  try {
+    for (const [index, host] of hosts.entries()) {
+      setStatus('running', `（${index + 1}/${hosts.length}）正在拉取到 <b>${esc(hostName(host))}</b>：<span class="mono">${esc(image)}</span>`);
+      try {
+        await api(`/hosts/${encodeURIComponent(host.id)}/images/pull`, {
+          method: 'POST',
+          body: { image }
+        });
+        done += 1;
+      } catch (err) {
+        failed.push(`${hostName(host)}：${errorText(err)}`);
+      }
+    }
+  } finally {
     if (button && button.isConnected) {
       button.disabled = false;
       button.removeAttribute('aria-busy');
       button.innerHTML = original;
     }
     if (versionSelect && versionSelect.isConnected) versionSelect.disabled = false;
-  });
+  }
+  S.hostImages = {};
+  if (!failed.length) {
+    setStatus('ok', `已在 ${done} 台节点拉取完成：<span class="mono">${esc(image)}</span>
+      <button class="btn-link" data-action="node-images-goto">查看服务器内镜像</button>`);
+    toast(`镜像已拉取到 ${done} 台节点`, 'success', 3200);
+  } else {
+    setStatus('err', `成功 ${done} 台，失败 ${failed.length} 台：${esc(failed[0])}`, failed.join('；'));
+    toast(`有 ${failed.length} 台拉取失败：${failed[0]}`, 'error', 8000);
+  }
 }
 
 function importK3sImageTar(target, options = {}) {
@@ -1619,7 +2463,7 @@ function importK3sImageTar(target, options = {}) {
       return;
     }
     input.remove();
-    const buttons = Array.from(document.querySelectorAll('[data-import-image], [data-import-image-multi]'));
+    const buttons = Array.from(document.querySelectorAll('[data-import-image], [data-import-image-multi], [data-action="node-images-import"]'));
     buttons.forEach((button) => {
       button.disabled = true;
       button.setAttribute('aria-busy', 'true');
@@ -1675,29 +2519,73 @@ function importK3sImageTar(target, options = {}) {
   input.click();
 }
 
+// 安装插件：先弹服务器列表（可多选），同一个集群只提交一次
 async function installCommunityComponent(id) {
   const component = COMMUNITY_COMPONENTS.find((c) => c.id === id);
   if (!component) return;
-  const host = deployTargetHost();
-  if (!host || !clusterCapable(host)) { toast('当前没有可用的 Kubernetes 集群', 'error'); return; }
-  const k8s = S.detected[host.id] && S.detected[host.id].k8s;
-  if (!k8s || k8s.flavor !== 'k3s') { toast('插件安装目前仅支持 k3s 内置 Helm Controller', 'error'); return; }
+  const pool = deployOperationPool();
+  if (!pool.length) { toast('还没有可用的服务器，请先添加并部署好 k3s 节点', 'error', 5000); return; }
+  const picked = await pickHosts({
+    hosts: pool,
+    allowMixed: true,
+    initial: pickInitialHostIds(pool),
+    title: `安装 ${component.name}：选择服务器`,
+    hint: '可以多选；同一个集群只会安装一次（HelmChart 是集群级资源）。插件由 k3s 内置 Helm Controller 异步安装。',
+    confirmText: '选择这些服务器'
+  });
+  if (!picked.length) return;
+  const targets = dedupeHostsByCluster(picked);
+  const skipped = picked.length - targets.length;
+  const targetText = targets.map((host) => `<b>${esc(hostName(host))}</b>`).join('、');
   const ok = await confirmDialog({
     title: `安装 ${component.name}`,
-    message: `将通过 k3s Helm Controller 在 <b>${esc(hostName(host))}</b> 上安装 <b>${esc(component.name)}</b> 到 <span class="code-inline">${esc(component.namespace)}</span>。插件安装是异步的，不会进入操作记录。`,
+    message: `将通过 k3s Helm Controller 在 ${targetText} 上安装 <b>${esc(component.name)}</b> 到 <span class="code-inline">${esc(component.namespace)}</span>。
+      ${targets.length > 1 ? `<br><br>共 ${targets.length} 个集群，会依次提交。` : ''}
+      ${skipped ? `<br>已跳过同集群的 ${skipped} 台（HelmChart 是集群级资源，一个集群装一次即可）。` : ''}
+      <br><br>插件安装是异步的，不会进入操作记录。`,
     confirmText: '安装插件',
     danger: false
   });
   if (!ok) return;
-  try {
-    await api(`/hosts/${encodeURIComponent(host.id)}/apply`, {
-      method: 'POST',
-      body: { yaml: communityChartYaml(component) }
-    });
-    toast(`${component.name} 已提交，等待 Helm Controller 安装`, 'success', 3500);
-  } catch (err) {
-    toast(errorText(err), 'error');
+  const failed = [];
+  let done = 0;
+  for (const host of targets) {
+    try {
+      await api(`/hosts/${encodeURIComponent(host.id)}/apply`, {
+        method: 'POST',
+        body: { yaml: communityChartYaml(component) }
+      });
+      done += 1;
+    } catch (err) {
+      failed.push(`${hostName(host)}：${errorText(err)}`);
+    }
   }
+  if (!failed.length) {
+    toast(`${component.name} 已提交到 ${done} 个集群，等待 Helm Controller 安装`, 'success', 3800);
+  } else if (done) {
+    toast(`${done} 个集群已提交，${failed.length} 个失败：${failed[0]}`, 'error', 8000);
+  } else {
+    toast(failed[0], 'error', 8000);
+  }
+}
+
+// 拉取基础镜像：先弹服务器列表（可多选），再逐台拉取
+async function pullBaseImageWithPicker(image, button) {
+  if (!image) return;
+  const pool = deployOperationPool();
+  if (!pool.length) { toast('还没有可用的服务器，请先添加服务器', 'error', 5000); return; }
+  const picked = await pickHosts({
+    hosts: pool,
+    allowMixed: true,
+    initial: pickInitialHostIds(pool),
+    title: '选择要拉取镜像的服务器',
+    hint: '可以多选；镜像按节点独立存储，会逐台写入所选节点的本地镜像库。',
+    confirmText: '开始拉取'
+  });
+  if (!picked.length) return;
+  // 「查看服务器内镜像」只显示一台：取本次拉取的第一台，方便拉完直接核对
+  S.hostImageTarget = picked[0].id;
+  await pullBaseImage(picked, image, button);
 }
 
 function networkDefaultsFromYaml(yaml) {
@@ -2944,7 +3832,7 @@ function openAddResource(kindOverride = '', options = {}) {
       </div>` : ''}
       ${saveOnly ? `<label class="field" style="margin-bottom:12px"><span class="field-label">配置文件名 <span class="req">*</span></span>
         <input class="input" id="wlFileName" value="${esc(initialFileName)}" autocomplete="off" spellcheck="false" />
-        <span class="help">保存到 data/deploymentTemplates；已存在同名文件时会提示是否覆盖${editing ? '，修改文件名会重命名原文件' : ''}。</span>
+        <span class="help">保存到 data/deployment-templates；已存在同名文件时会提示是否覆盖${editing ? '，修改文件名会重命名原文件' : ''}。</span>
       </label>` : ''}
       <div id="wlFormWrap" class="${initialYamlMode ? 'hidden' : ''}">
         <div class="form-grid">
@@ -2973,11 +3861,11 @@ function openAddResource(kindOverride = '', options = {}) {
       </div>` : ''}
       ${saveOnly ? '' : `<div class="row" style="margin-top:12px">
         <label class="check"><input type="checkbox" id="wlDryRun" /> 服务端试运行（不写入集群）</label>
-        <label class="check"><input type="checkbox" id="wlSaveTemplate" checked /> 应用成功后保存 YAML 到 data/deploymentTemplates</label>
+        <label class="check"><input type="checkbox" id="wlSaveTemplate" checked /> 应用成功后保存 YAML 到 data/deployment-templates</label>
       </div>`}`,
     foot: saveOnly
-      ? `<button class="btn" data-close="1">取消</button><button class="btn primary" id="wlSaveTemplateBtn" title="保存到 data/deploymentTemplates；同名文件会提示是否覆盖">${editing ? '保存修改' : '保存'}</button>`
-      : `<button class="btn" data-close="1">取消</button><button class="btn" id="wlSaveTemplateBtn" title="保存到 data/deploymentTemplates；同名模板会覆盖">保存</button><button class="btn" id="wlPreviewBtn">预览 YAML</button><button class="btn primary" id="wlApplyBtn">${icon('check')} 应用</button>`,
+      ? `<button class="btn" data-close="1">取消</button><button class="btn primary" id="wlSaveTemplateBtn" title="保存到 data/deployment-templates；同名文件会提示是否覆盖">${editing ? '保存修改' : '保存'}</button>`
+      : `<button class="btn" data-close="1">取消</button><button class="btn" id="wlSaveTemplateBtn" title="保存到 data/deployment-templates；同名模板会覆盖">保存</button><button class="btn" id="wlPreviewBtn">预览 YAML</button><button class="btn primary" id="wlApplyBtn">${icon('check')} 应用</button>`,
     onClose: saveOnly ? () => { if (S.view === 'deploy' && S.deployTab === 'custom') renderView(); } : null,
     onMount(m) {
       const fields = $('#wlFields', m.el);
@@ -3344,7 +4232,7 @@ function openAddResource(kindOverride = '', options = {}) {
             return;
           }
           const template = await saveAddTemplate(data);
-          openYamlPreview('已保存', `${data.yaml}\n# 已保存到 data/deploymentTemplates/${template.name}.yaml`);
+          openYamlPreview('已保存', `${data.yaml}\n# 已保存到 data/deployment-templates/${template.name}.yaml`);
           toast(`已保存模板「${template.name}」`, 'success');
         } catch (err) {
           toast(`保存失败：${errorText(err)}`, 'error');
@@ -3385,7 +4273,7 @@ function openAddResource(kindOverride = '', options = {}) {
             }
           }
           m.close();
-          toast(templateSaved ? `${data.label} 已创建，YAML 已保存到 data/deploymentTemplates` : `${data.label} 已创建`, 'success');
+          toast(templateSaved ? `${data.label} 已创建，YAML 已保存到 data/deployment-templates` : `${data.label} 已创建`, 'success');
           S.page.kind = data.targetKind;
           S.page.namespace = data.namespace || '';
           S.page.search = '';
@@ -3472,7 +4360,7 @@ function openPodConfigTypePicker() {
   openModal({
     title: '新增配置',
     size: 'narrow',
-    body: `<div class="alert info" style="margin-bottom:14px">${icon('plus')}<div>配置会保存到 data/deploymentTemplates，稍后可在本页直接应用到 k3s 服务器。</div></div>
+    body: `<div class="alert info" style="margin-bottom:14px">${icon('plus')}<div>配置会保存到 data/deployment-templates，稍后可在本页直接应用到 k3s 服务器。</div></div>
       <label class="field"><span class="field-label">配置类型</span>
         <select class="select" id="podAddType">
           ${entries.map(([kind, meta]) => `<option value="${esc(kind)}" ${kind === 'pods' ? 'selected' : ''}>${esc(meta.label)}</option>`).join('')}
@@ -3520,7 +4408,7 @@ function openRawPodConfigEditor(template) {
     body: `<div class="alert warn" style="margin-bottom:12px">${icon('alert')}<div>该 YAML 不是内置资源类型，暂不支持图形化编辑，请直接修改 YAML。</div></div>
       <label class="field" style="margin-bottom:10px"><span class="field-label">配置文件名 <span class="req">*</span></span>
         <input class="input" id="podConfigFileName" value="${esc(template.id)}" autocomplete="off" spellcheck="false" />
-        <span class="help">保存到 data/deploymentTemplates；已存在同名文件时会提示是否覆盖，修改文件名会重命名原文件。</span>
+        <span class="help">保存到 data/deployment-templates；已存在同名文件时会提示是否覆盖，修改文件名会重命名原文件。</span>
       </label>
       <label class="field"><span class="field-label">YAML</span>
       <textarea class="editor" id="podConfigEditor" spellcheck="false" style="min-height:420px">${esc(template.yaml)}</textarea>
@@ -3593,7 +4481,7 @@ async function deletePodConfig(id) {
   }
   const confirmed = await confirmDialog({
     title: '删除配置',
-    message: `确定删除「<b>${esc(template.name)}</b>」吗？<br><span class="tiny dim">对应文件会从 data/deploymentTemplates 中删除，且无法恢复。</span>`,
+    message: `确定删除「<b>${esc(template.name)}</b>」吗？<br><span class="tiny dim">对应文件会从 data/deployment-templates 中删除，且无法恢复。</span>`,
     confirmText: '删除',
     danger: true
   });
@@ -3654,7 +4542,7 @@ function openPodConfigImportModal(fileName, yamlText) {
   openModal({
     title: '导入配置文件',
     size: 'wide',
-    body: `<div class="alert info" style="margin-bottom:12px">${icon('download')}<div>从本地导入 YAML 并保存到 data/deploymentTemplates；不会直接应用到集群。</div></div>
+    body: `<div class="alert info" style="margin-bottom:12px">${icon('download')}<div>从本地导入 YAML 并保存到 data/deployment-templates；不会直接应用到集群。</div></div>
       <label class="field" style="margin-bottom:10px"><span class="field-label">配置文件名 <span class="req">*</span></span>
         <input class="input" id="podImportFileName" value="${esc(initialName)}" autocomplete="off" spellcheck="false" />
         <span class="help">默认使用所选文件名，可修改；已存在同名文件时会提示是否覆盖。</span>
@@ -3859,7 +4747,7 @@ function renderDeployCustom() {
       <div class="card-head">
         <h3>${icon('layers')} 本地配置</h3>
         <div class="row">
-          <span class="hint">${allTemplates.length ? (filter === 'all' ? `${allTemplates.length} 个配置` : `${templates.length} / ${allTemplates.length} 个配置`) : '保存在 data/deploymentTemplates'}</span>
+          <span class="hint">${allTemplates.length ? (filter === 'all' ? `${allTemplates.length} 个配置` : `${templates.length} / ${allTemplates.length} 个配置`) : '保存在 data/deployment-templates'}</span>
           <button class="btn sm" data-action="pod-config-refresh" title="重新读取本地配置目录">${icon('refresh')} 刷新</button>
           <button class="btn sm" data-action="pod-config-import" title="从本地 YAML 文件导入配置">${icon('download')} 导入配置文件</button>
           <button class="btn sm primary" data-action="pod-config-add">${icon('plus')} 新增配置</button>
@@ -3886,7 +4774,7 @@ function renderDeployCustom() {
         <span class="hint">点击展开 / 收起</span>
       </summary>
       <div class="card-body small muted" style="line-height:1.85">
-        <div class="guide-lead">本地配置来自 data/deploymentTemplates/。先新增、导入或编辑配置，再点配置卡片的「应用」选择目标服务器；只会显示已安装 k3s 的服务器，支持单选和多选。列表顶部可按 YAML 中的 kind 过滤配置类型。</div>
+        <div class="guide-lead">本地配置来自 data/deployment-templates/。先新增、导入或编辑配置，再点配置卡片的「应用」选择目标服务器；只会显示已安装 k3s 的服务器，支持单选和多选。列表顶部可按 YAML 中的 kind 过滤配置类型。</div>
         <div class="guide-types">
           <div><b>Deployment</b>：长期运行、多副本、滚动更新，业务应用优先选这个。</div>
           <div><b>Pod（单实例）</b>：临时调试或单实例验证；换镜像不能原地改，需要删除 Pod 重建。</div>
@@ -3896,7 +4784,7 @@ function renderDeployCustom() {
         <div class="guide-section">
           <h4>应用步骤</h4>
           <ol class="guide-steps">
-            <li><b>新增 / 导入 / 编辑：</b>点「新增配置」或已有配置的「编辑」，可在「图形化」和「查看 YAML」之间来回切换；在查看 YAML 中修改后通过语法检测才能保存，配置会写入 data/deploymentTemplates/。列表顶部的「导入配置文件」可以选择本地 YAML，确认文件名和语法后导入；配置文件名可直接修改，保存时会检查重名。</li>
+            <li><b>新增 / 导入 / 编辑：</b>点「新增配置」或已有配置的「编辑」，可在「图形化」和「查看 YAML」之间来回切换；在查看 YAML 中修改后通过语法检测才能保存，配置会写入 data/deployment-templates/。列表顶部的「导入配置文件」可以选择本地 YAML，确认文件名和语法后导入；配置文件名可直接修改，保存时会检查重名。</li>
             <li><b>选择服务器：</b>点配置卡片的「应用」，在弹窗中只显示已安装 k3s 的机器；可选一台或多台，选择后进入确认弹窗。</li>
             <li><b>先试运行：</b>建议在确认弹窗勾选「服务端试运行」，确认 YAML、权限和准入规则通过后再正式应用。</li>
             <li><b>正式应用：</b>确认后会对选中的每台服务器依次执行 apply；结果会逐台列出。</li>

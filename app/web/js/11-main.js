@@ -83,11 +83,6 @@ async function handleAction(el, action) {
       }
       break;
     }
-    case 'deploy-images': {
-      const target = deployTargetHost();
-      if (target) openHostImagesModal(target);
-      break;
-    }
     case 'host-preflight':
       if (host) openPreflight(host);
       break;
@@ -218,12 +213,113 @@ async function handleAction(el, action) {
       if (el.dataset.image) await copyText(el.dataset.image);
       break;
     case 'image-pull': {
-      const target = deployTargetHost();
-      if (target && el.dataset.image) pullBaseImage(target, el.dataset.image, el);
+      if (el.dataset.image) await pullBaseImageWithPicker(el.dataset.image, el);
+      break;
+    }
+    case 'components-subtab': {
+      const tab = componentSubTabOf(el.dataset.tab || 'components');
+      if (tab === S.componentsTab) break;
+      S.componentsTab = tab;
+      renderView();
+      break;
+    }
+    case 'image-category': {
+      const category = String(el.dataset.category || '').trim();
+      if (!category || category === imageCategoryId()) break;
+      S.imageCategory = category;
+      renderView();
+      break;
+    }
+    case 'node-images-goto':
+      S.hostImages = {};
+      goComponentsTab('node-images');
+      break;
+    case 'node-images-refresh': {
+      const host = nodeImageHost();
+      if (host) delete S.hostImages[host.id];
+      renderView();
+      break;
+    }
+    case 'node-images-filters-reset':
+      S.hostImageFilters = { name: '', id: '' };
+      renderView();
+      break;
+    case 'node-images-import': {
+      // 先选服务器（可多选、可跨集群），再上传 .tar：同一个包依次分发到每台
+      const pool = nodeImagePool();
+      if (!pool.length) { toast('还没有可导入的服务器', 'error'); break; }
+      const current = nodeImageHost();
+      const picked = await pickHosts({
+        hosts: pool,
+        allowMixed: true,
+        initial: current ? [current.id] : [],
+        title: '选择要导入镜像的服务器',
+        hint: '可以多选、可跨集群；选好后再挑镜像包，同一个 tar 会依次分发到每台服务器导入。',
+        confirmText: '选择镜像包'
+      });
+      if (!picked.length) break;
+      importK3sImageTar(picked, {
+        onClose: () => {
+          picked.forEach((host) => delete S.hostImages[host.id]);
+          renderView();
+        }
+      });
+      break;
+    }
+    case 'node-image-copy':
+      if (el.dataset.image) await copyText(el.dataset.image);
+      break;
+    case 'node-image-download': {
+      const host = findHost(el.dataset.host);
+      const image = el.dataset.image || '';
+      if (!host || !image || image === '<none>') break;
+      el.disabled = true;
+      try {
+        const created = await api(`/hosts/${encodeURIComponent(host.id)}/images/export`, {
+          method: 'POST',
+          body: { image }
+        });
+        openJobModal(created.jobId, { onClose: () => renderView() });
+      } catch (err) {
+        el.disabled = false;
+        toast(errorText(err), 'error', 6000);
+      }
+      break;
+    }
+    case 'node-image-delete': {
+      const host = findHost(el.dataset.host);
+      const imageId = el.dataset.imageId || '';
+      if (!host || !imageId) break;
+      await deleteK3sImage(host, imageId, el.dataset.imageLabel || '', {
+        onCancel: () => {},
+        onDone: () => {
+          delete S.hostImages[host.id];
+          renderView();
+        }
+      });
       break;
     }
     case 'image-repo-config':
       openImageRepositoryConfig();
+      break;
+    case 'image-new':
+      openImageEditor(null);
+      break;
+    case 'image-edit':
+      openImageEditor(findBaseImage(String(el.dataset.image || '').trim()));
+      break;
+    case 'image-menu':
+      openImageActionMenu(el, String(el.dataset.image || '').trim());
+      break;
+    case 'image-delete':
+      await deleteBaseImage(String(el.dataset.image || '').trim());
+      break;
+    case 'image-category-add':
+      openImageCategoryDraft();
+      break;
+    case 'image-category-delete':
+      event.stopPropagation();
+      await deleteImageCategory(String(el.dataset.category || '').trim());
       break;
     case 'image-pull-copy':
       if (el.dataset.command) await copyText(el.dataset.command);
@@ -322,6 +418,7 @@ function bindStatic() {
 
   document.addEventListener('click', (event) => {
     if (hostActionMenuEl && (!event.target.closest || !event.target.closest('#hostActionMenu'))) closeHostActionMenu();
+    if (imageActionMenuEl && (!event.target.closest || !event.target.closest('#imageActionMenu'))) closeImageActionMenu();
     if (jobContextMenuEl && (!event.target.closest || !event.target.closest('#jobContextMenu'))) closeJobContextMenu();
     const deployParent = event.target.closest('.nav-parent[data-view="deploy"]');
     if (deployParent) {
@@ -363,6 +460,12 @@ function bindStatic() {
     if (target.id === 'hostsSearch') {
       S.page.hostsQuery = target.value;
       refreshServerList();
+    } else if (target.id === 'nodeImageNameFilter') {
+      S.hostImageFilters.name = target.value;
+      refreshNodeImageResult();
+    } else if (target.id === 'nodeImageIdFilter') {
+      S.hostImageFilters.id = target.value;
+      refreshNodeImageResult();
     } else if (target.id === 'wlSearch') {
       S.page.search = target.value;
       S.page.page = 1;
@@ -374,6 +477,17 @@ function bindStatic() {
     }
   });
 
+  // 镜像分类页签：拖动排序
+  document.addEventListener('dragstart', (event) => imageCategoryDragStart(event));
+  document.addEventListener('dragover', (event) => imageCategoryDragOver(event));
+  document.addEventListener('drop', (event) => {
+    Promise.resolve(imageCategoryDrop(event)).catch((err) => {
+      console.error(err);
+      toast(errorText(err), 'error', 5000);
+    });
+  });
+  document.addEventListener('dragend', () => imageCategoryDragEnd());
+
   document.addEventListener('change', (event) => {
     const target = event.target;
     if (target.id === 'wlNamespace') {
@@ -383,6 +497,12 @@ function bindStatic() {
       renderView();
     } else if (target.id === 'podConfigTypeFilter') {
       S.podConfigTypeFilter = target.value || 'all';
+      renderView();
+    } else if (target.id === 'nodeImageHostSelect') {
+      // 单选切换：换一台服务器就重新读取该节点的镜像
+      if (!target.value) return;
+      S.hostImageTarget = target.value;
+      delete S.hostImages[target.value];
       renderView();
     } else if (target.id === 'yamlTemplate') {
       const template = yamlTemplateByKey(target.value);
@@ -453,6 +573,10 @@ function bindStatic() {
       }
       if (jobContextMenuEl) {
         closeJobContextMenu();
+        return;
+      }
+      if (imageCategoryDraftEl) {
+        closeImageCategoryDraft();
         return;
       }
       if ($('#modalRoot .modal')) closeModal();
@@ -582,7 +706,7 @@ async function init() {
     bootStatus('boot', '正在连接控制台', '正在读取服务状态…');
     const slowTimer = setTimeout(bootSlowHint, 4000);
     try {
-      await Promise.all([loadBootstrap(), loadConfig(), loadImageRepository()]);
+      await Promise.all([loadBootstrap(), loadConfig(), loadImageRepository(), loadImageCatalog()]);
       await loadHosts();
     } finally {
       clearTimeout(slowTimer);

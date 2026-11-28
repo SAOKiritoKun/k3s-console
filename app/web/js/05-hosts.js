@@ -773,52 +773,8 @@ function formatBytes(value) {
   return `${bytes} B`;
 }
 
-function hostImagesTableHTML(data) {
-  const images = Array.isArray(data && data.images) ? data.images : [];
-  const toolbar = `<div class="row" style="justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
-    <span class="tiny dim">共 ${esc(String(data && data.total !== undefined ? data.total : images.length))} 个镜像${data && data.fetchedAt ? ` · ${esc(new Date(data.fetchedAt).toLocaleString())}` : ''}</span>
-    <div class="row" style="gap:8px">
-      <button class="btn sm" data-import-image="1" title="上传 .tar 镜像包并导入该节点">${icon('upload')} 导入镜像</button>
-      <button class="btn sm" data-import-image-multi="1" title="选多台服务器，同一个 tar 一次导入">${icon('upload')} 多台导入</button>
-      <button class="btn sm" data-images-refresh="1">${icon('refresh')} 刷新</button>
-    </div>
-  </div>`;
-  if (!images.length) {
-    const repo = S.imageRepository && S.imageRepository.repository ? S.imageRepository.repository : 'docker.io';
-    return `${toolbar}<div class="alert info">${icon('box')}<div>节点上还没有读取到镜像。可以重新读取，或确认 k3s/containerd 已启动。当前镜像仓库：<b class="mono">${esc(repo)}</b>，未配置时会使用默认的 <b class="mono">docker.io</b>。</div></div>`;
-  }
-  const rows = images.map((item) => {
-    const tags = Array.isArray(item.repoTags) ? item.repoTags.filter(Boolean) : [];
-    const primary = tags[0] || '<none>';
-    const extra = tags.slice(1);
-    const digest = Array.isArray(item.repoDigests) && item.repoDigests[0] ? item.repoDigests[0] : '';
-    const shortId = String(item.id || '').replace(/^sha256:/, '').slice(0, 12) || '-';
-    return `<tr>
-      <td class="primary">
-        <div class="image-name-row">
-          <span class="mono">${esc(primary)}</span>
-          ${primary !== '<none>' ? `<button class="icon-btn inline-copy-btn" data-copy-image="${esc(primary)}" title="复制镜像名" aria-label="复制镜像名">${icon('copy')}</button>` : ''}
-        </div>
-        ${extra.length ? `<div class="tiny dim mono" style="margin-top:2px">${extra.map((tag) => esc(tag)).join('<br>')}</div>` : ''}
-        ${digest ? `<div class="tiny dim mono" style="margin-top:2px">${esc(digest)}</div>` : ''}
-      </td>
-      <td class="mono" title="${esc(item.id || '')}">${esc(shortId)}</td>
-      <td class="right">${esc(formatBytes(item.size))}</td>
-      <td class="right">
-        <div class="row-actions" style="opacity:1">
-          <button class="icon-btn" data-download-image="${esc(primary)}" title="导出并下载镜像 tar" aria-label="导出并下载镜像 tar" ${primary === '<none>' ? 'disabled' : ''}>${icon('download')}</button>
-          <button class="icon-btn danger" data-delete-image="${esc(item.id || '')}" data-delete-label="${esc(primary)}" title="删除镜像（含该镜像的所有 tag）" aria-label="删除镜像" ${item.id ? '' : 'disabled'}>${icon('trash')}</button>
-        </div>
-      </td>
-    </tr>`;
-  }).join('');
-  return `${toolbar}<div class="table-wrap"><table class="data">
-    <thead><tr><th>镜像</th><th>镜像 ID</th><th class="right">大小</th><th class="right">操作</th></tr></thead>
-    <tbody>${rows}</tbody>
-  </table></div>`;
-}
 
-async function deleteK3sImage(host, imageId, label) {
+async function deleteK3sImage(host, imageId, label, options = {}) {
   if (!host || !imageId) return;
   const name = label || imageId;
   const ok = await confirmDialog({
@@ -828,7 +784,7 @@ async function deleteK3sImage(host, imageId, label) {
     danger: true
   });
   if (!ok) {
-    openHostImagesModal(host);
+    if (options.onCancel) options.onCancel();
     return;
   }
   try {
@@ -837,101 +793,10 @@ async function deleteK3sImage(host, imageId, label) {
   } catch (err) {
     toast(errorText(err), 'error', 5000);
   } finally {
-    openHostImagesModal(host);
+    if (options.onDone) options.onDone();
   }
 }
 
-function openHostImagesModal(host) {
-  if (!host) return;
-  const modal = openModal({
-    title: `k3s 镜像 · ${hostName(host)}`,
-    size: 'wide',
-    body: `<div class="alert info">${icon('refresh')}<div>正在读取节点镜像…</div></div>`
-  });
-  const root = modal.el;
-  const setBody = (html) => {
-    if (!root.isConnected) return;
-    modal.setBody(html);
-  };
-  const load = async () => {
-    setBody(`<div class="alert info">${icon('refresh')}<div>正在读取节点镜像…</div></div>`);
-    try {
-      const data = await api(`/hosts/${encodeURIComponent(host.id)}/images`);
-      if (!root.isConnected) return;
-      setBody(hostImagesTableHTML(data));
-    } catch (err) {
-      if (!root.isConnected) return;
-      setBody(`<div class="alert err">${icon('alert')}<div>${esc(errorText(err))}</div></div>
-        <div class="row" style="justify-content:flex-end"><button class="btn sm" data-images-refresh="1">${icon('refresh')} 重试</button></div>`);
-    }
-  };
-  root.addEventListener('click', async (event) => {
-    const refresh = event.target.closest('[data-images-refresh]');
-    if (refresh) {
-      event.preventDefault();
-      await load();
-      return;
-    }
-    const importBtn = event.target.closest('[data-import-image]');
-    if (importBtn) {
-      event.preventDefault();
-      if (importBtn.disabled) return;
-      // 导入的跟踪窗口会替换掉镜像列表弹窗，关闭窗口后回到镜像列表
-      importK3sImageTar(host, { onClose: () => openHostImagesModal(host) });
-      return;
-    }
-    const importMultiBtn = event.target.closest('[data-import-image-multi]');
-    if (importMultiBtn) {
-      event.preventDefault();
-      if (importMultiBtn.disabled) return;
-      // 镜像按节点各存一份，可以跨集群多选：同一个 tar 一次分发到所有选中节点
-      const pool = S.hosts.filter((item) => (item.transport || 'ssh') === 'ssh');
-      openHostPicker({
-        hosts: pool,
-        allowMixed: true,
-        initial: [host.id],
-        title: '选择要导入镜像的服务器',
-        hint: '镜像按节点独立存储，可以跨集群多选；同一个 tar 会依次分发到每台服务器导入。',
-        confirmText: '选择镜像包',
-        onConfirm: (picked) => importK3sImageTar(picked, { onClose: () => openHostImagesModal(host) })
-      });
-      return;
-    }
-    const copy = event.target.closest('[data-copy-image]');
-    if (copy) {
-      event.preventDefault();
-      await copyText(copy.dataset.copyImage || '');
-      return;
-    }
-    const download = event.target.closest('[data-download-image]');
-    if (download) {
-      event.preventDefault();
-      const image = download.dataset.downloadImage || '';
-      if (!image || image === '<none>') return;
-      download.disabled = true;
-      try {
-        const created = await api(`/hosts/${encodeURIComponent(host.id)}/images/export`, {
-          method: 'POST',
-          body: { image }
-        });
-        // 跟踪窗口会替换掉镜像列表弹窗；关闭窗口时再回到镜像列表
-        openJobModal(created.jobId, {
-          onClose: () => openHostImagesModal(host)
-        });
-      } catch (err) {
-        download.disabled = false;
-        toast(errorText(err), 'error', 6000);
-      }
-      return;
-    }
-    const remove = event.target.closest('[data-delete-image]');
-    if (remove) {
-      event.preventDefault();
-      await deleteK3sImage(host, remove.dataset.deleteImage || '', remove.dataset.deleteLabel || '');
-    }
-  });
-  load();
-}
 
 function offlinePackageById(id) {
   return S.offlinePackages.find((pkg) => pkg.id === id) || null;

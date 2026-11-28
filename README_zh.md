@@ -20,7 +20,7 @@
 | 集群视图 | 节点 / Pod / Deployment / Service 统计、事件、资源占用、节点 cordon / drain |
 | 工作负载 | 20 类资源、详情抽屉（概览 / YAML / 日志 / 终端 / 事件 / describe）、带服务端试运行的 YAML apply、扩缩容、滚动重启、删除、表单化创建资源 |
 | 镜像 | 查看节点镜像、拉取基础镜像、把节点镜像导出为一次性 `.tar` 下载、把一个 `.tar` 导入一台或多台节点（只上传一次再分发） |
-| 本地配置 | `data/deploymentTemplates/` 下的 YAML，表单生成或直接导入，可应用到一台或多台服务器 |
+| 本地配置 | `data/deployment-templates/` 下的 YAML，表单生成或直接导入，可应用到一台或多台服务器 |
 | 操作记录 | 每个异步任务（安装、卸载、升级、导入、导出）都保存步骤和完整日志，实时推送进度，可取消 |
 | 界面 | 白天 / 黑夜主题、移动端适配、前端资源全部本地内置、`?demo=1` 免集群预览 |
 
@@ -90,8 +90,12 @@ token）；想彻底重来请先卸载。
 - 「查看当前k3s内镜像」列出镜像名、tag、ID 和大小：可以复制名称、导出成一次性 `.tar` 下载（没下载成要重新导出）、
   按 ID 删除。
 - 「导入镜像」把 tar 导入当前节点；「多台导入」只上传一次，再分发到多台节点。
-- 基础镜像卡片（MySQL、PostgreSQL、Redis、Kafka、Java、Go）带版本下拉、拉取按钮和可复制的拉取命令；
-  仓库配置在 `data/image-repository.json`。
+- 基础镜像按分类（操作系统、运行环境、数据库、缓存、消息队列、注册中心）分页签展示，每张卡片带版本下拉、拉取按钮和可复制的拉取命令；
+  镜像管理页上可以直接编辑，保存都写回 `data/image-management/images.json`（这个文件不随仓库发布，第一次保存时才创建）：
+  页签最右边的 `+` 就地新增分类、拖动页签可以调整顺序、页签上的 `×` 删除分类（二次确认；分类下还有镜像时会提示数量，确认后连同这些镜像配置一起删除）；
+  卡片右上角的 `…` 里有编辑和删除（删除同样二次确认，确认后只删配置）；
+  也可以直接改这个文件，改完刷新浏览器即可生效；镜像的 `kind` 写分类 `id`（如 `database`），改分类名称不影响归属，也兼容直接写分类名（如 `数据库`）；
+  仓库配置在 `data/image-management/images-repository.json`。
 
 ### 工作负载
 
@@ -99,12 +103,12 @@ token）；想彻底重来请先卸载。
 - 点一行打开详情抽屉：概览、YAML、日志、终端、事件、describe。
 - 可以应用 / 编辑 YAML（必要时先服务端试运行）、扩缩容、滚动重启、删除、对节点 cordon / uncordon / drain、
   按容器 / tail 行数 / 上一次查看 Pod 日志。
-- 「新增」按当前资源类型从表单生成清单，先预览 YAML，再保存到 `data/deploymentTemplates/` 或直接应用。
+- 「新增」按当前资源类型从表单生成清单，先预览 YAML，再保存到 `data/deployment-templates/` 或直接应用。
 - 选中的服务器是工作节点时，集群数据经它连接的控制节点读取，页面会说明是哪一台。
 
 ### 本地配置
 
-- 部署中心 → Pod 部署 管理 `data/deploymentTemplates/` 下的 YAML，不点「应用」不会写进集群。
+- 部署中心 → Pod 部署 管理 `data/deployment-templates/` 下的 YAML，不点「应用」不会写进集群。
 - 可以用表单生成或直接粘 YAML、导入 `.yaml` 文件、在图形化和 YAML 之间切换编辑，然后应用到一台或多台服务器
   （不确定时先勾试运行）。
 
@@ -250,15 +254,17 @@ k3s-console/
 | 路径 | 内容 |
 | --- | --- |
 | `data/server.json` | 服务器连接信息（含凭据，**明文**，已 gitignore） |
-| `data/deploymentTemplates/*.yaml` | 本地配置，一个文件就是一份 YAML |
-| `data/image-repository.json` | 镜像仓库配置（默认 `docker.io`） |
+| `data/deployment-templates/*.yaml` | 本地配置，一个文件就是一份 YAML |
+| `data/image-management/images-repository.json` | 镜像仓库配置（默认 `docker.io`） |
+| `data/image-management/images.json` | 镜像清单：分类与镜像信息，页面编辑时生成并写回，不随仓库发布 |
 | `logs/operations/*.json` | 操作记录：步骤、日志、结果 |
 | `packages/` | k3s 离线包，`*.tar.gz` 归档或解压后的目录 |
 
 备份这个控制台就是备份 `config.json` + `data/`。
 
-`data/` 和 `logs/` 在第一次启动时自动创建，包括 `data/server.json`、`data/image-repository.json` 和
-`data/deploymentTemplates/`，克隆下来直接启动即可，不用手工建目录。`logs/tmp/` 只在导出镜像时出现；
+`data/` 和 `logs/` 在第一次启动时自动创建，包括 `data/server.json`、`data/image-management/images-repository.json`、
+`data/deployment-templates/`，克隆下来直接启动即可，不用手工建目录。`data/image-management/images.json` 不在仓库里，启动时也不会生成，
+只有在页面上编辑过镜像或分类之后才会写回它（文件被删掉时，下次编辑会自动重建），所以新环境刚打开镜像页时是空的。`logs/tmp/` 只在导出镜像时出现；
 `packages/` 不会自动创建，放离线包时自己建。
 
 ## 安全提示

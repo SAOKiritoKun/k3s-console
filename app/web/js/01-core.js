@@ -51,6 +51,14 @@ const S = {
   groups: [],
   activeHostId: localStorage.getItem(ACTIVE_KEY) || '',
   selectedHostIds: [],
+  // 组件与镜像页：子页签 + 「查看服务器内镜像」当前查看的服务器、镜像缓存与本地筛选
+  componentsTab: 'components',
+  imageCategory: 'all',
+  // 镜像清单（分类 + 镜像）来自工程预置的 data/image-management/images.json
+  imageCatalog: { categories: [], images: [], skipped: 0, missing: false, file: '', error: '', loaded: false },
+  hostImageTarget: '',
+  hostImages: {},
+  hostImageFilters: { name: '', id: '' },
   view: 'dashboard',
   detected: {},
   overview: {},
@@ -683,8 +691,9 @@ function setHeader(view) {
   });
   syncDeployNav();
   document.title = `${meta.title} · ${S.health ? S.health.name : 'k3s 集群管家'}`;
+  // 服务器选择器只在工作负载页用；页面上默认隐藏，避免加载期间在别的页面闪出来
   const picker = $('#hostPicker');
-  if (picker) picker.style.display = view === 'workloads' ? '' : 'none';
+  if (picker) picker.classList.toggle('hidden', view !== 'workloads');
 }
 
 function syncDeployNav() {
@@ -830,11 +839,20 @@ function openHostPicker(options = {}) {
 
   const footHTML = `<button class="btn ghost" data-picker-cancel="1">取消</button>
     <button class="btn primary" id="pickerConfirm" data-picker-confirm="1">${esc(confirmText)}</button>`;
+  // 只结束一次：确认走 onConfirm，取消或直接关窗走 onCancel
+  let settled = false;
+  const finish = (callback, value) => {
+    if (settled) return;
+    settled = true;
+    closeModal();
+    if (typeof callback === 'function') callback(value);
+  };
   const modal = openModal({
     title: options.title || (allowMixed ? '选择部署服务器' : '选择服务器'),
     size: 'wide',
     body: hostPickerBodyHTML(state),
     foot: footHTML,
+    onClose: () => finish(options.onCancel, []),
     onMount(box) {
       const refresh = () => {
         box.setBody(hostPickerBodyHTML(state));
@@ -856,7 +874,7 @@ function openHostPicker(options = {}) {
         if (empty) empty.style.display = visible ? 'none' : '';
       };
       box.el.addEventListener('click', (event) => {
-        if (event.target.closest('[data-picker-cancel]')) { closeModal(); return; }
+        if (event.target.closest('[data-picker-cancel]')) { finish(options.onCancel, []); return; }
         if (event.target.closest('[data-picker-confirm]')) {
           const hosts = [...state.selected].map((id) => state.hosts.find((h) => h.id === id)).filter(Boolean);
           if (!hosts.length) { toast('请至少选择一台服务器', 'error'); return; }
@@ -868,12 +886,11 @@ function openHostPicker(options = {}) {
             }
           }
           if (state.onConfirm) {
-            closeModal();
-            state.onConfirm(hosts);
+            finish(state.onConfirm, hosts);
             return;
           }
+          finish(null, null);
           setHostSelection(hosts.map((h) => h.id));
-          closeModal();
           S.cluster = null;
           S.workloadData = null;
           renderView();
@@ -926,6 +943,17 @@ function openHostPicker(options = {}) {
     }
   });
   return modal;
+}
+
+// 以 Promise 形式使用服务器选择器：确认返回选中的 host 数组，取消/关窗返回空数组
+function pickHosts(options = {}) {
+  return new Promise((resolve) => {
+    openHostPicker({
+      ...options,
+      onConfirm: (hosts) => resolve(hosts || []),
+      onCancel: () => resolve([])
+    });
+  });
 }
 
 function deployTabOf(value) {
@@ -999,6 +1027,9 @@ function goDeployTab(tab, options = {}) {
 
 function renderView() {
   closeCselect();
+  // 卡片重绘后原来的锚点就没了，浮动菜单要一起收掉
+  if (typeof closeHostActionMenu === 'function') closeHostActionMenu();
+  if (typeof closeImageActionMenu === 'function') closeImageActionMenu();
   setHeader(S.view);
   updateHostPicker();
   const view = $('#view');
@@ -1010,6 +1041,14 @@ function renderView() {
   } catch (err) {
     console.error(err);
     view.innerHTML = `<div class="alert err">${icon('alert')}<div>页面渲染失败：${esc(errorText(err))}</div></div>`;
+  }
+  // 重绘后把还没保存的就地输入（比如新增分类的草稿）接着显示
+  if (typeof restoreImageCategoryDraft === 'function') {
+    try {
+      restoreImageCategoryDraft();
+    } catch (err) {
+      console.error(err);
+    }
   }
 }
 
